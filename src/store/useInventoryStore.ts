@@ -169,7 +169,7 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
   isSidebarOpen: false,
   stockTransactionModalSku: null,
   updateWriteOffModalCategory: null,
-  isDarkMode: false,
+  isDarkMode: typeof document !== 'undefined' ? (document.documentElement.classList.contains('dark') || localStorage.getItem('okf_theme') === 'dark') : false,
 
   setActiveModule: (module) => set({ activeModule: module }),
 
@@ -212,10 +212,14 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
   toggleDarkMode: () => {
     set(state => {
       const next = !state.isDarkMode;
-      if (next) {
-        document.documentElement.classList.add('dark');
-      } else {
-        document.documentElement.classList.remove('dark');
+      if (typeof document !== 'undefined') {
+        if (next) {
+          document.documentElement.classList.add('dark');
+          localStorage.setItem('okf_theme', 'dark');
+        } else {
+          document.documentElement.classList.remove('dark');
+          localStorage.setItem('okf_theme', 'light');
+        }
       }
       return { isDarkMode: next };
     });

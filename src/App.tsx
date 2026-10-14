@@ -17,12 +17,22 @@ import { KeyboardShortcutsModal } from './components/KeyboardShortcutsModal';
 export const App: React.FC = () => {
   const { 
     activeModule, 
+    isDarkMode,
     setKeyboardShortcutsOpen, 
     isKeyboardShortcutsOpen,
     isCommandPaletteOpen,
     selectedSku,
     setSelectedSku
   } = useInventoryStore();
+
+  // Sync dark class with isDarkMode
+  useEffect(() => {
+    if (isDarkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [isDarkMode]);
 
   // Global hotkeys
   useEffect(() => {
