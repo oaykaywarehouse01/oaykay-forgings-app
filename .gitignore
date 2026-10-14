@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+dist/
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Editor & OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# AI Prompts & Internal Specifications
+*prompt*
+*antigravity*
+okf_stock_master_antigravity_prompt*
+*.prompt
+*.agent
+
+# Internal Scripts & Temporary files
+scripts/
+test_*.xlsx
+scratch/
