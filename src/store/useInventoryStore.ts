@@ -685,7 +685,8 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
 
       const sku = nextSkus[idx];
       const prevStock = Math.round(sku.current_stock);
-      const deductQty = Math.round(item.orderedQty);
+      const deductQty = typeof item.dispatchQty === 'number' ? Math.round(item.dispatchQty) : Math.round(item.orderedQty);
+      if (deductQty <= 0) return;
       const newStock = prevStock - deductQty;
 
       nextSkus[idx] = {
@@ -706,13 +707,16 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
         newStock
       });
 
+      const isPartial = deductQty < Math.round(item.orderedQty);
       newTxns.push({
         id: `TXN-SO-${so.piNumber}-${Date.now().toString().slice(-4)}-${deductions.length}`,
         sku_code: sku.sku_code,
         sku_name: sku.clean_name,
         type: 'STOCK_OUT',
         quantity: deductQty,
-        reason: `Sales Order PI #${so.piNumber} Dispatch to ${so.partyName}`,
+        reason: isPartial
+          ? `Sales Order PI #${so.piNumber} Partial Dispatch (${deductQty} of ${item.orderedQty} ordered) to ${so.partyName}`
+          : `Sales Order PI #${so.piNumber} Full Dispatch (${deductQty} Units) to ${so.partyName}`,
         performed_by: 'Dispatch Staff',
         timestamp: new Date().toISOString(),
         prev_stock: prevStock,

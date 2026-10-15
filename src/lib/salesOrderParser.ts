@@ -290,12 +290,15 @@ export const parseSalesOrderExcel = async (file: File, skus: SkuItem[]): Promise
         rawItemName,
         cleanItemName,
         orderedQty,
+        dispatchQty: orderedQty, // Default dispatch qty = full ordered qty
         matchedSku,
         isPromoOrNonStock: isPromo,
+        selectedForLastBox: isPromo, // Non-stock / promo items default to packing in last box
         unitsPerBox: packingConfig.unitsPerBox,
         grossWeightPerBox: packingConfig.grossWeightPerBox,
-        isMixedCarton: false,
+        isMixedCarton: isPromo, // Promo items default to mixed carton
         mixedCartonNo: null,
+        assignedBoxNo: null
       });
     }
   }
@@ -338,12 +341,15 @@ export const getSampleSalesOrder699 = (skus: SkuItem[]): SalesOrderData => {
       rawItemName: item.name,
       cleanItemName,
       orderedQty: Math.round(item.qty),
+      dispatchQty: Math.round(item.qty),
       matchedSku,
       isPromoOrNonStock: isPromo,
+      selectedForLastBox: isPromo,
       unitsPerBox: packingConfig.unitsPerBox,
       grossWeightPerBox: packingConfig.grossWeightPerBox,
-      isMixedCarton: false,
+      isMixedCarton: isPromo,
       mixedCartonNo: null,
+      assignedBoxNo: null
     };
   });
 
@@ -362,73 +368,151 @@ export const getSampleSalesOrder699 = (skus: SkuItem[]): SalesOrderData => {
 };
 
 // Generate Cartons and Packaging List Summary
+// CRITICAL RULE: Non-stock / promo items (notepad, pen, key rings, etc.) are ALWAYS
+// packed in the LAST BOX (at the very bottom) so tool boxes come first!
 export const generateCartonsAndPackagingList = (soData: SalesOrderData): PackingListSummary => {
   const cartons: Carton[] = [];
   let currentCartonNo = 1;
 
-  // 1. Separate mixed carton items from standard dedicated carton items
-  const standardItems = soData.items.filter(item => !item.isMixedCarton);
-  const mixedItems = soData.items.filter(item => item.isMixedCarton);
+  // Filter items with active dispatchQty > 0
+  const activeItems = soData.items.filter(item => {
+    const qty = typeof item.dispatchQty === 'number' ? item.dispatchQty : item.orderedQty;
+    return qty > 0;
+  });
 
-  // 2. Generate standard dedicated cartons
-  standardItems.forEach(item => {
-    const unitsPerBox = Math.max(1, Math.round(item.unitsPerBox || item.orderedQty));
-    const grossWt = Number(Number(item.grossWeightPerBox || 15.00).toFixed(2));
-    const totalQty = Math.round(item.orderedQty);
+  // 1. Separate items:
+  // - Tool / Inventory items
+  // - Non-stock / Promo items (to be placed at the very bottom / last box)
+  const toolItems = activeItems.filter(item => !item.isPromoOrNonStock);
+  const promoItems = activeItems.filter(item => item.isPromoOrNonStock);
+
+  // 2. Process tool items: Standard & Box Assigned
+  // CRITICAL LOGIC: If an item has totalQty > unitsPerBox (e.g. 400 pcs with unitsPerBox = 200),
+  // it MUST be split into multiple individual cartons:
+  // - Box 1: 200 pcs, Gross Weight: 18.00 kg
+  // - Box 2: 200 pcs, Gross Weight: 18.00 kg
+  // Each full box receives the exact item.grossWeightPerBox!
+
+  // Group tool items that share a mixed box (items with <= unitsPerBox sharing the same assignedBoxNo or mixedCartonNo)
+  const explicitMixedGroups: Record<number, SalesOrderItem[]> = {};
+  const standardOrSplitItems: SalesOrderItem[] = [];
+
+  toolItems.forEach(item => {
+    const totalQty = typeof item.dispatchQty === 'number' ? Math.round(item.dispatchQty) : Math.round(item.orderedQty);
+    const unitsPerBox = Math.max(1, Math.round(item.unitsPerBox || totalQty));
+
+    // If item is explicitly marked mixed or shares a box with another item and fits in 1 box
+    if (item.isMixedCarton && item.mixedCartonNo) {
+      if (!explicitMixedGroups[item.mixedCartonNo]) explicitMixedGroups[item.mixedCartonNo] = [];
+      explicitMixedGroups[item.mixedCartonNo].push(item);
+    } else {
+      standardOrSplitItems.push(item);
+    }
+  });
+
+  // Pack standard and split tool items
+  standardOrSplitItems.forEach(item => {
+    const totalQty = typeof item.dispatchQty === 'number' ? Math.round(item.dispatchQty) : Math.round(item.orderedQty);
+    if (totalQty <= 0) return;
+
+    const unitsPerBox = Math.max(1, Math.round(item.unitsPerBox || totalQty));
+    const grossWtPerBox = Number(Number(item.grossWeightPerBox || 15.00).toFixed(2));
 
     let remainingQty = totalQty;
+    let boxNum = item.assignedBoxNo ? item.assignedBoxNo : currentCartonNo;
+
     while (remainingQty > 0) {
       const boxQty = Math.min(unitsPerBox, remainingQty);
-      // Pro-rate weight if partial box, or keep nominal box weight
-      const boxWt = Number(((boxQty / unitsPerBox) * grossWt).toFixed(2));
+      // For a full box (e.g. 200/200), weight is exactly grossWtPerBox (e.g. 18.00 kg)
+      // For a partial remainder box (e.g. 50/200), weight is proportional
+      const boxWt = boxQty === unitsPerBox 
+        ? grossWtPerBox 
+        : Number(((boxQty / unitsPerBox) * grossWtPerBox).toFixed(2));
 
-      cartons.push({
-        cartonNo: currentCartonNo++,
-        shippingMark: soData.shippingMark,
-        piNumber: soData.piNumber,
-        partyName: soData.partyName,
-        items: [{
-          slNo: 1,
+      // If a carton with this boxNum already exists (from another item sharing it)
+      const existingCartonIndex = cartons.findIndex(c => c.cartonNo === boxNum);
+      if (existingCartonIndex !== -1 && item.assignedBoxNo) {
+        // Append item to existing carton
+        const existingCarton = cartons[existingCartonIndex];
+        existingCarton.items.push({
+          id: `item-${boxNum}-${item.slNo}-${remainingQty}`,
+          slNo: existingCarton.items.length + 1,
           rawName: item.rawItemName,
           cleanName: item.cleanItemName,
           qty: boxQty,
           weightKg: boxWt,
-          isPromoOrNonStock: item.isPromoOrNonStock
-        }],
-        totalQty: boxQty,
-        grossWeightKg: boxWt,
-        isMixed: false
-      });
+          isPromoOrNonStock: false
+        });
+        existingCarton.totalQty += boxQty;
+        existingCarton.grossWeightKg = Number((existingCarton.grossWeightKg + boxWt).toFixed(2));
+        existingCarton.isMixed = true;
+      } else {
+        // Create new carton
+        cartons.push({
+          id: `carton-${boxNum}-${item.slNo}-${remainingQty}`,
+          cartonNo: boxNum,
+          shippingMark: soData.shippingMark,
+          piNumber: soData.piNumber,
+          partyName: soData.partyName,
+          items: [{
+            id: `item-${boxNum}-${item.slNo}`,
+            slNo: 1,
+            rawName: item.rawItemName,
+            cleanName: item.cleanItemName,
+            qty: boxQty,
+            weightKg: boxWt,
+            isPromoOrNonStock: false
+          }],
+          totalQty: boxQty,
+          grossWeightKg: boxWt,
+          isMixed: false
+        });
+      }
+
+      if (!item.assignedBoxNo) {
+        currentCartonNo++;
+        boxNum = currentCartonNo;
+      } else {
+        boxNum++;
+        if (boxNum > currentCartonNo) {
+          currentCartonNo = boxNum;
+        }
+      }
 
       remainingQty -= boxQty;
     }
   });
 
-  // 3. Process mixed cartons (grouped by mixedCartonNo)
-  const mixedGroups: Record<number, SalesOrderItem[]> = {};
-  mixedItems.forEach(item => {
-    const cNo = item.mixedCartonNo || currentCartonNo;
-    if (!mixedGroups[cNo]) mixedGroups[cNo] = [];
-    mixedGroups[cNo].push(item);
-  });
+  // Pack explicit mixed tool groups
+  Object.entries(explicitMixedGroups).forEach(([cNoStr, groupItems]) => {
+    let assignedNo = parseInt(cNoStr, 10);
+    if (isNaN(assignedNo) || assignedNo < currentCartonNo) {
+      assignedNo = currentCartonNo++;
+    } else if (assignedNo >= currentCartonNo) {
+      currentCartonNo = assignedNo + 1;
+    }
 
-  Object.entries(mixedGroups).forEach(([cNoStr, groupItems]) => {
-    const assignedNo = parseInt(cNoStr, 10);
-    // Combined weight is either user specified on first item or sum
-    const combinedWeight = Number(Number(groupItems[0]?.mixedCartonGrossWeight || groupItems[0]?.grossWeightPerBox || 12.00).toFixed(2));
-    
-    const cartonItems: CartonItem[] = groupItems.map((gi, idx) => ({
-      slNo: idx + 1,
-      rawName: gi.rawItemName,
-      cleanName: gi.cleanItemName,
-      qty: Math.round(gi.orderedQty),
-      weightKg: Number((combinedWeight / groupItems.length).toFixed(2)),
-      isPromoOrNonStock: gi.isPromoOrNonStock
-    }));
+    const combinedWeight = Number(
+      Number(groupItems[0]?.mixedCartonGrossWeight || groupItems[0]?.grossWeightPerBox || 15.00).toFixed(2)
+    );
+
+    const cartonItems: CartonItem[] = groupItems.map((gi, idx) => {
+      const itemQty = typeof gi.dispatchQty === 'number' ? Math.round(gi.dispatchQty) : Math.round(gi.orderedQty);
+      return {
+        id: `item-${assignedNo}-${gi.slNo}`,
+        slNo: idx + 1,
+        rawName: gi.rawItemName,
+        cleanName: gi.cleanItemName,
+        qty: itemQty,
+        weightKg: Number((combinedWeight / groupItems.length).toFixed(2)),
+        isPromoOrNonStock: false
+      };
+    });
 
     const totalQty = cartonItems.reduce((acc, ci) => acc + ci.qty, 0);
 
     cartons.push({
+      id: `carton-${assignedNo}-mixed-tools`,
       cartonNo: assignedNo,
       shippingMark: soData.shippingMark,
       piNumber: soData.piNumber,
@@ -440,7 +524,77 @@ export const generateCartonsAndPackagingList = (soData: SalesOrderData): Packing
     });
   });
 
-  // Sort cartons sequentially by cartonNo
+  // 5. PROCESS PROMO / NON-STOCK ITEMS (ALWAYS PACKED AT THE VERY BOTTOM / LAST BOX)
+  if (promoItems.length > 0) {
+    // Determine the highest carton number so far
+    const maxToolCartonNo = cartons.reduce((max, c) => Math.max(max, c.cartonNo), 0);
+    const lastCartonNo = Math.max(maxToolCartonNo + 1, currentCartonNo);
+
+    // Filter promo items selected for packing into the last box
+    const selectedForLast = promoItems.filter(p => p.selectedForLastBox !== false);
+    const notSelectedForLast = promoItems.filter(p => p.selectedForLastBox === false);
+
+    // Group all selected promo items into ONE single final carton (The Last Box)
+    if (selectedForLast.length > 0) {
+      const promoWeight = Number(Number(selectedForLast[0]?.mixedCartonGrossWeight || 6.50).toFixed(2));
+      const cartonItems: CartonItem[] = selectedForLast.map((pi, idx) => {
+        const itemQty = typeof pi.dispatchQty === 'number' ? Math.round(pi.dispatchQty) : Math.round(pi.orderedQty);
+        return {
+          id: `item-lastbox-${pi.slNo}`,
+          slNo: idx + 1,
+          rawName: pi.rawItemName,
+          cleanName: pi.cleanItemName,
+          qty: itemQty,
+          weightKg: Number((promoWeight / selectedForLast.length).toFixed(2)),
+          isPromoOrNonStock: true
+        };
+      });
+
+      const totalQty = cartonItems.reduce((acc, ci) => acc + ci.qty, 0);
+
+      cartons.push({
+        id: `carton-${lastCartonNo}-lastbox-promo`,
+        cartonNo: lastCartonNo,
+        shippingMark: soData.shippingMark,
+        piNumber: soData.piNumber,
+        partyName: soData.partyName,
+        items: cartonItems,
+        totalQty,
+        grossWeightKg: promoWeight,
+        isMixed: true
+      });
+    }
+
+    // Any individual non-stock items not in the combined last box
+    let extraCartonNo = lastCartonNo + 1;
+    notSelectedForLast.forEach(pi => {
+      const itemQty = typeof pi.dispatchQty === 'number' ? Math.round(pi.dispatchQty) : Math.round(pi.orderedQty);
+      const wt = Number((pi.grossWeightPerBox || 2.50).toFixed(2));
+      const cNo = pi.assignedBoxNo || extraCartonNo++;
+
+      cartons.push({
+        id: `carton-${cNo}-single-promo-${pi.slNo}`,
+        cartonNo: cNo,
+        shippingMark: soData.shippingMark,
+        piNumber: soData.piNumber,
+        partyName: soData.partyName,
+        items: [{
+          id: `item-${cNo}-${pi.slNo}`,
+          slNo: 1,
+          rawName: pi.rawItemName,
+          cleanName: pi.cleanItemName,
+          qty: itemQty,
+          weightKg: wt,
+          isPromoOrNonStock: true
+        }],
+        totalQty: itemQty,
+        grossWeightKg: wt,
+        isMixed: false
+      });
+    });
+  }
+
+  // Sort cartons sequentially by cartonNo so tools are first and promo box is at the VERY BOTTOM
   cartons.sort((a, b) => a.cartonNo - b.cartonNo);
 
   const totalBoxes = cartons.length;

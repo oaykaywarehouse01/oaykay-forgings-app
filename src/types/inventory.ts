@@ -111,8 +111,10 @@ export interface SalesOrderItem {
   rawItemName: string;
   cleanItemName: string; // Uppercase, trimmed, trailing Dim/Din/Dtr removed
   orderedQty: number; // 100% whole integer
+  dispatchQty?: number; // Partial fulfillment quantity to dispatch (defaults to orderedQty)
   matchedSku: SkuItem | null;
   isPromoOrNonStock: boolean;
+  selectedForLastBox?: boolean; // Selected to pack in final / bottom box
   
   // Packing configuration (Step 3)
   unitsPerBox: number; // Units per box (Whole integer)
@@ -120,6 +122,7 @@ export interface SalesOrderItem {
   isMixedCarton?: boolean;
   mixedCartonNo?: number | null; // Shared carton number e.g. 7, 8
   mixedCartonGrossWeight?: number | null; // Shared carton gross weight
+  assignedBoxNo?: number | null; // Direct box number assignment (e.g. 1, 2, 3...)
 }
 
 export interface SalesOrderData {
@@ -136,6 +139,7 @@ export interface SalesOrderData {
 }
 
 export interface CartonItem {
+  id?: string;
   slNo: number; // 1, 2, 3 inside carton
   rawName: string;
   cleanName: string; // Uppercase
@@ -145,6 +149,7 @@ export interface CartonItem {
 }
 
 export interface Carton {
+  id?: string;
   cartonNo: number; // 1, 2, 3...
   shippingMark: string; // e.g. "RMTS/Delhi/07"
   piNumber: string; // e.g. "699"
