@@ -1,0 +1,1191 @@
+import React, { useState, useMemo } from 'react';
+import { 
+  Boxes, 
+  MapPin, 
+  Download, 
+  Upload, 
+  Plus, 
+  CheckCircle2, 
+  AlertTriangle, 
+  Search, 
+  Calendar, 
+  ArrowRight, 
+  Layers, 
+  ShieldCheck, 
+  FileSpreadsheet,
+  Trash2,
+  Edit3,
+  Clock,
+  Sparkles,
+  RefreshCw,
+  Sliders,
+  Filter
+} from 'lucide-react';
+import { useInventoryStore } from '../store/useInventoryStore';
+import { WarehouseLocation, LocationStockEntry, DivisionCode, SkuItem } from '../types/inventory';
+import { 
+  normalizeLocationCode, 
+  createNewSteelRackLocations, 
+  createNewPalletLineLocations, 
+  createNewBinRange 
+} from '../lib/locationUtils';
+import { 
+  downloadLocationStockTemplate, 
+  parseUploadedLocationStockExcel 
+} from '../lib/locationTemplateExcel';
+import { parseSalesOrderExcel } from '../lib/salesOrderParser';
+import * as XLSX from 'xlsx';
+
+export const LocationStockView: React.FC = () => {
+  const { 
+    skus, 
+    categories, 
+    warehouseLocations, 
+    locationStockEntries, 
+    countSession, 
+    currentUser,
+    deductedSalesOrders,
+    addWarehouseLocation, 
+    saveLocationStockEntry, 
+    batchSaveLocationStockEntries,
+    clearLocationStockEntries,
+    setCountSession,
+    applyOutwardReconciliation,
+    syncLocationStockToMaster,
+    addNewSku,
+    setAddNewSkuModalOpen
+  } = useInventoryStore();
+
+  // Active view tab
+  const [activeTab, setActiveTab] = useState<'grid' | 'reconcile' | 'ledger'>('grid');
+
+  // Location filter in grid
+  const [zoneFilter, setZoneFilter] = useState<'ALL' | 'RACK' | 'PALLET' | 'BIN'>('ALL');
+  const [searchLocationQuery, setSearchLocationQuery] = useState('');
+
+  // Selected location for editing/drawer
+  const [selectedLocation, setSelectedLocation] = useState<WarehouseLocation | null>(null);
+  const [selectedSkuForCount, setSelectedSkuForCount] = useState<SkuItem | null>(null);
+  const [skuSearchQuery, setSkuSearchQuery] = useState('');
+  const [countedQtyInput, setCountedQtyInput] = useState<string>('50');
+  const [countNotes, setCountNotes] = useState<string>('');
+
+  // Add Location Modal state
+  const [isAddLocationModalOpen, setIsAddLocationModalOpen] = useState(false);
+  const [newLocType, setNewLocType] = useState<'RACK' | 'PALLET' | 'BIN'>('RACK');
+  const [newLocCode, setNewLocCode] = useState('AA');
+  const [newLocCount, setNewLocCount] = useState<number>(3);
+  const [newBinStart, setNewBinStart] = useState<number>(31);
+  const [newBinEnd, setNewBinEnd] = useState<number>(50);
+
+  // Status & Notification messages
+  const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [isUploadingExcel, setIsUploadingExcel] = useState(false);
+
+  // Reconciliation state (Part 5)
+  const [reconcileStartDate, setReconcileStartDate] = useState(countSession.startDate || '2026-10-16');
+  const [reconcileEndDate, setReconcileEndDate] = useState(countSession.endDate || '2026-10-20');
+  const [autoIncludeDispatched, setAutoIncludeDispatched] = useState(true);
+  const [uploadedOutwardOrders, setUploadedOutwardOrders] = useState<Array<{
+    piNumber: string;
+    partyName: string;
+    items: Array<{ skuCode: string; cleanName: string; outwardQty: number }>;
+  }>>([]);
+  const [selectedReconcileLocations, setSelectedReconcileLocations] = useState<Record<string, string>>({});
+
+  const showStatus = (type: 'success' | 'error', text: string) => {
+    setStatusMessage({ type, text });
+    setTimeout(() => setStatusMessage(null), 5000);
+  };
+
+  // Aggregated units and SKU counts per location
+  const locationStatsMap = useMemo(() => {
+    const map = new Map<string, { skuCount: number; totalUnits: number }>();
+    locationStockEntries.forEach(entry => {
+      const loc = entry.locationCode;
+      if (!map.has(loc)) {
+        map.set(loc, { skuCount: 0, totalUnits: 0 });
+      }
+      const cur = map.get(loc)!;
+      cur.skuCount += 1;
+      cur.totalUnits += entry.countedQty;
+    });
+    return map;
+  }, [locationStockEntries]);
+
+  // Filtered locations list
+  const filteredLocations = useMemo(() => {
+    return warehouseLocations.filter(loc => {
+      if (zoneFilter !== 'ALL' && loc.type !== zoneFilter) return false;
+      if (searchLocationQuery.trim()) {
+        const q = searchLocationQuery.toLowerCase();
+        return loc.code.toLowerCase().includes(q) || loc.zone.toLowerCase().includes(q);
+      }
+      return true;
+    });
+  }, [warehouseLocations, zoneFilter, searchLocationQuery]);
+
+  // Overall totals
+  const totalPhysicalUnits = useMemo(() => {
+    return locationStockEntries.reduce((sum, e) => sum + e.countedQty, 0);
+  }, [locationStockEntries]);
+
+  const uniqueSkusCounted = useMemo(() => {
+    return new Set(locationStockEntries.map(e => e.skuId)).size;
+  }, [locationStockEntries]);
+
+  // Filter SKUs for counting drawer
+  const searchSkuResults = useMemo(() => {
+    if (!skuSearchQuery.trim()) return skus.slice(0, 15);
+    const q = skuSearchQuery.toLowerCase();
+    return skus.filter(s => 
+      s.clean_name.toLowerCase().includes(q) || 
+      s.sku_code.toLowerCase().includes(q) ||
+      s.main_category.toLowerCase().includes(q)
+    ).slice(0, 15);
+  }, [skus, skuSearchQuery]);
+
+  // Active items counted inside the currently selected location
+  const itemsInSelectedLocation = useMemo(() => {
+    if (!selectedLocation) return [];
+    return locationStockEntries.filter(e => e.locationCode === selectedLocation.code);
+  }, [selectedLocation, locationStockEntries]);
+
+  // Handlers for physical count save
+  const handleSaveCountEntry = () => {
+    if (!selectedLocation || !selectedSkuForCount) {
+      showStatus('error', 'Please select a location and an SKU to record physical count.');
+      return;
+    }
+    const qty = parseInt(countedQtyInput, 10);
+    if (isNaN(qty) || qty < 0) {
+      showStatus('error', 'Please enter a valid whole-integer count quantity (0 or greater).');
+      return;
+    }
+
+    saveLocationStockEntry({
+      skuId: selectedSkuForCount.id,
+      skuCode: selectedSkuForCount.sku_code,
+      cleanName: selectedSkuForCount.clean_name,
+      division: selectedSkuForCount.division,
+      mainCategory: selectedSkuForCount.main_category,
+      locationCode: selectedLocation.code,
+      countedQty: qty,
+      countedBy: currentUser.name,
+      notes: countNotes
+    });
+
+    showStatus('success', `Saved ${qty.toLocaleString()} Pcs of "${selectedSkuForCount.clean_name}" in ${selectedLocation.code}`);
+    setCountedQtyInput('50');
+    setCountNotes('');
+  };
+
+  // 1-Click Excel Template Download
+  const handleDownloadTemplate = () => {
+    try {
+      downloadLocationStockTemplate(skus, warehouseLocations, categories);
+      showStatus('success', 'Location Stock Template downloaded with 3 sheets (Entry, Location Master, Division Guide).');
+    } catch (err) {
+      showStatus('error', `Failed to generate Excel template: ${(err as Error).message}`);
+    }
+  };
+
+  // 1-Click Excel Upload
+  const handleUploadFilledTemplate = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploadingExcel(true);
+    try {
+      const parsed = await parseUploadedLocationStockExcel(file, skus, warehouseLocations);
+      
+      // Auto-add new locations discovered
+      if (parsed.newLocationsDiscovered.length > 0) {
+        const newLocs: WarehouseLocation[] = parsed.newLocationsDiscovered.map(code => ({
+          code,
+          type: code.startsWith('BIN') ? 'BIN' : (code.match(/^[A-G]/) ? 'RACK' : 'PALLET'),
+          zone: code.startsWith('BIN') ? 'Storage Bins' : (code.match(/^[A-G]/) ? `Rack ${code.charAt(0)}` : `Line ${code.charAt(0)}`),
+          description: `Location ${code}`
+        }));
+        addWarehouseLocation(newLocs);
+      }
+
+      // Auto-add new SKUs discovered in bottom rows
+      if (parsed.newSkusToAdd.length > 0) {
+        parsed.newSkusToAdd.forEach(n => {
+          addNewSku(n);
+        });
+      }
+
+      // Batch save location stock entries
+      batchSaveLocationStockEntries(parsed.entries);
+
+      showStatus('success', `Successfully uploaded ${parsed.entries.length} location counts (${parsed.totalUnitsCounted.toLocaleString()} units). ${parsed.newSkusToAdd.length} new SKUs and ${parsed.newLocationsDiscovered.length} new locations registered.`);
+    } catch (err) {
+      showStatus('error', `Excel parse error: ${(err as Error).message}`);
+    } finally {
+      setIsUploadingExcel(false);
+      e.target.value = '';
+    }
+  };
+
+  // Add Location Modal submission
+  const handleCreateNewLocations = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (newLocType === 'RACK') {
+      const created = createNewSteelRackLocations(newLocCode, newLocCount);
+      addWarehouseLocation(created);
+      showStatus('success', `Created Rack ${newLocCode} with ${created.length} shelves (${created.map(l => l.code).join(', ')}).`);
+    } else if (newLocType === 'PALLET') {
+      const created = createNewPalletLineLocations(newLocCode, newLocCount);
+      addWarehouseLocation(created);
+      showStatus('success', `Created Pallet Line ${newLocCode} with ${created.length} pallets (${created.map(l => l.code).join(', ')}).`);
+    } else if (newLocType === 'BIN') {
+      const created = createNewBinRange(newBinStart, newBinEnd);
+      addWarehouseLocation(created);
+      showStatus('success', `Created ${created.length} bins from BIN-${newBinStart} to BIN-${newBinEnd}.`);
+    }
+    setIsAddLocationModalOpen(false);
+  };
+
+  // Upload Outward SO for Counting Window (Part 5)
+  const handleUploadOutwardSO = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const parsedSO = await parseSalesOrderExcel(file, skus);
+      const itemsList = parsedSO.items.map(it => ({
+        skuCode: it.matchedSku?.sku_code || 'UNTRACKED',
+        cleanName: it.cleanItemName,
+        outwardQty: typeof it.dispatchQty === 'number' ? it.dispatchQty : it.orderedQty
+      }));
+
+      // Check duplicate PI
+      if (countSession.reconciledOrders.includes(parsedSO.piNumber) || uploadedOutwardOrders.some(o => o.piNumber === parsedSO.piNumber)) {
+        showStatus('error', `Sales Order PI #${parsedSO.piNumber} is already uploaded or reconciled!`);
+        return;
+      }
+
+      setUploadedOutwardOrders(prev => [...prev, {
+        piNumber: parsedSO.piNumber,
+        partyName: parsedSO.partyName,
+        items: itemsList
+      }]);
+
+      showStatus('success', `Uploaded Outward SO PI #${parsedSO.piNumber} (${parsedSO.partyName}) with ${itemsList.length} items.`);
+    } catch (err) {
+      showStatus('error', `Failed to parse Outward SO: ${(err as Error).message}`);
+    } finally {
+      e.target.value = '';
+    }
+  };
+
+  // Reconciled items list combining uploaded orders + app dispatched orders
+  const reconciliationTableItems = useMemo(() => {
+    const list: Array<{
+      id: string;
+      source: string;
+      skuCode: string;
+      cleanName: string;
+      outwardQty: number;
+      countedStock: number;
+      primaryLocation: string;
+      netLiveStock: number;
+    }> = [];
+
+    // 1. From uploaded outward files
+    uploadedOutwardOrders.forEach(ord => {
+      ord.items.forEach(it => {
+        const matchingEntries = locationStockEntries.filter(
+          e => e.skuCode === it.skuCode || e.cleanName.toLowerCase() === it.cleanName.toLowerCase()
+        );
+        const countedTotal = matchingEntries.reduce((sum, e) => sum + e.countedQty, 0);
+        const primaryLoc = matchingEntries[0]?.locationCode || 'A1';
+        const net = Math.max(0, countedTotal - it.outwardQty);
+
+        list.push({
+          id: `outward-${ord.piNumber}-${it.skuCode}-${it.cleanName}`,
+          source: `PI #${ord.piNumber} (${ord.partyName})`,
+          skuCode: it.skuCode,
+          cleanName: it.cleanName,
+          outwardQty: it.outwardQty,
+          countedStock: countedTotal,
+          primaryLocation: primaryLoc,
+          netLiveStock: net
+        });
+      });
+    });
+
+    // 2. From in-app dispatched orders between start & end dates
+    if (autoIncludeDispatched) {
+      Object.values(deductedSalesOrders).forEach(so => {
+        if (!countSession.reconciledOrders.includes(so.piNumber) && !uploadedOutwardOrders.some(u => u.piNumber === so.piNumber)) {
+          so.deductions.forEach(d => {
+            const matchingEntries = locationStockEntries.filter(e => e.skuId === d.skuId);
+            const countedTotal = matchingEntries.reduce((sum, e) => sum + e.countedQty, 0);
+            const primaryLoc = matchingEntries[0]?.locationCode || 'A1';
+            const net = Math.max(0, countedTotal - d.qtyDeducted);
+
+            list.push({
+              id: `app-so-${so.piNumber}-${d.skuId}`,
+              source: `App Dispatched: PI #${so.piNumber} (${so.partyName})`,
+              skuCode: d.skuCode,
+              cleanName: d.cleanName,
+              outwardQty: d.qtyDeducted,
+              countedStock: countedTotal,
+              primaryLocation: primaryLoc,
+              netLiveStock: net
+            });
+          });
+        }
+      });
+    }
+
+    return list;
+  }, [uploadedOutwardOrders, autoIncludeDispatched, deductedSalesOrders, locationStockEntries, countSession.reconciledOrders]);
+
+  // Execute Outward Deduction
+  const handleApplyOutwardDeductions = () => {
+    if (reconciliationTableItems.length === 0) {
+      showStatus('error', 'No outward items to reconcile. Upload outward Sales Orders first.');
+      return;
+    }
+
+    uploadedOutwardOrders.forEach(ord => {
+      const itemsToDeduct = ord.items.map(it => ({
+        skuCode: it.skuCode,
+        cleanName: it.cleanName,
+        outwardQty: it.outwardQty,
+        deductFromLocation: selectedReconcileLocations[`${ord.piNumber}-${it.skuCode}`] || 'A1'
+      }));
+      applyOutwardReconciliation(ord.piNumber, itemsToDeduct);
+    });
+
+    setUploadedOutwardOrders([]);
+    showStatus('success', 'Applied outward deductions to location stock. Counts are now net of dispatches!');
+  };
+
+  // Make Location Stock LIVE (Admin Only)
+  const handleMakeLocationStockLive = () => {
+    if (currentUser.role !== 'admin') {
+      showStatus('error', 'Only Admin (Owner / Superuser) has the authority to make Location Stock LIVE.');
+      return;
+    }
+    const res = syncLocationStockToMaster();
+    if (res.success) {
+      showStatus('success', res.message);
+    } else {
+      showStatus('error', res.message);
+    }
+  };
+
+  return (
+    <div className="space-y-6 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto animate-in fade-in duration-200">
+      {/* Status Alert Banner */}
+      {statusMessage && (
+        <div className={`flex items-center justify-between rounded-xl p-4 text-xs font-bold animate-in fade-in ${
+          statusMessage.type === 'success' 
+            ? 'bg-emerald-50 text-emerald-900 border border-emerald-300 dark:bg-emerald-950 dark:border-emerald-800 dark:text-emerald-200' 
+            : 'bg-rose-50 text-rose-900 border border-rose-300 dark:bg-rose-950 dark:border-rose-800 dark:text-rose-200'
+        }`}>
+          <div className="flex items-center gap-2">
+            {statusMessage.type === 'success' ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <AlertTriangle className="h-4 w-4 text-rose-600" />}
+            <span>{statusMessage.text}</span>
+          </div>
+          <button onClick={() => setStatusMessage(null)} className="text-slate-400 hover:text-slate-600">×</button>
+        </div>
+      )}
+
+      {/* Top Banner & Control Bar */}
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between rounded-2xl border-2 border-slate-200 bg-white p-5 shadow-xs dark:border-slate-800 dark:bg-slate-900 gap-4">
+        <div>
+          <div className="flex items-center gap-2 text-xs font-extrabold text-orange-600 uppercase tracking-wider">
+            <MapPin className="h-3.5 w-3.5" />
+            <span>Independent Warehouse Locations & Physical Count Module</span>
+          </div>
+          <h1 className="mt-1 text-2xl font-black text-slate-900 dark:text-white flex items-center gap-3">
+            <span>Location Stock (Steel Racks A–G • Pallets H+ • Bins)</span>
+            <span className="rounded-full bg-indigo-100 px-3 py-0.5 text-xs font-bold text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
+              V3 Independent
+            </span>
+          </h1>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-2xl">
+            Physical counting in this module operates 100% independently from daily dispatches until Admin triggers <strong>Sync & Make Location Stock LIVE</strong>.
+          </p>
+        </div>
+
+        {/* Global Action Buttons */}
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <button
+            onClick={handleDownloadTemplate}
+            className="flex items-center gap-1.5 rounded-xl border border-slate-300 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 transition"
+            title="Download OKF_Location_Wise_Stock_Template.xlsx with 3 pre-filled sheets"
+          >
+            <Download className="h-3.5 w-3.5 text-orange-600" />
+            <span>Download Template (.xlsx)</span>
+          </button>
+
+          <label className="flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100 dark:border-indigo-900 dark:bg-indigo-950 dark:text-indigo-300 cursor-pointer transition">
+            <Upload className="h-3.5 w-3.5 text-indigo-600" />
+            <span>{isUploadingExcel ? 'Uploading...' : 'Upload Filled Excel (.xlsx)'}</span>
+            <input
+              type="file"
+              accept=".xlsx,.xls"
+              onChange={handleUploadFilledTemplate}
+              disabled={isUploadingExcel}
+              className="sr-only"
+            />
+          </label>
+
+          <button
+            onClick={() => setIsAddLocationModalOpen(true)}
+            className="flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 transition"
+          >
+            <Plus className="h-3.5 w-3.5 text-emerald-600" />
+            <span>+ Add Location</span>
+          </button>
+
+          {currentUser.role === 'admin' && (
+            <button
+              onClick={handleMakeLocationStockLive}
+              className="flex items-center gap-1.5 rounded-xl bg-orange-600 px-4 py-2 text-xs font-bold text-white shadow-xs hover:bg-orange-700 active:scale-95 transition"
+              title="Sync net location physical totals into main Stock Master"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              <span>Make Location Stock LIVE!</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* KPI Stats Bar */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="rounded-xl border border-slate-200 bg-white p-3.5 dark:border-slate-800 dark:bg-slate-900 shadow-2xs">
+          <span className="text-[10px] font-bold text-slate-400 uppercase">Warehouse Locations</span>
+          <div className="mt-1 font-mono text-xl font-black text-slate-900 dark:text-white">
+            {warehouseLocations.length} <span className="text-xs text-slate-400 font-normal">Registered</span>
+          </div>
+          <span className="text-[10px] text-slate-500 font-mono">21 Racks • 54 Pallets • 30+ Bins</span>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-3.5 dark:border-slate-800 dark:bg-slate-900 shadow-2xs">
+          <span className="text-[10px] font-bold text-indigo-500 uppercase">SKUs Counted</span>
+          <div className="mt-1 font-mono text-xl font-black text-indigo-600 dark:text-indigo-400">
+            {uniqueSkusCounted} / {skus.length}
+          </div>
+          <span className="text-[10px] text-slate-500 font-mono">{((uniqueSkusCounted / skus.length) * 100).toFixed(1)}% Coverage</span>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-3.5 dark:border-slate-800 dark:bg-slate-900 shadow-2xs">
+          <span className="text-[10px] font-bold text-emerald-500 uppercase">Total Counted Units</span>
+          <div className="mt-1 font-mono text-xl font-black text-emerald-600 dark:text-emerald-400">
+            {totalPhysicalUnits.toLocaleString()} <span className="text-xs font-normal">Pcs</span>
+          </div>
+          <span className="text-[10px] text-slate-500 font-mono">{locationStockEntries.length} Storage Placements</span>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-3.5 dark:border-slate-800 dark:bg-slate-900 shadow-2xs">
+          <span className="text-[10px] font-bold text-amber-500 uppercase">Counting Window Status</span>
+          <div className="mt-1 font-mono text-sm font-black text-slate-800 dark:text-slate-200 truncate">
+            {reconcileStartDate} → {reconcileEndDate}
+          </div>
+          <span className="text-[10px] text-amber-600 font-mono font-bold">
+            {countSession.reconciledOrders.length} Outward Dispatches Reconciled
+          </span>
+        </div>
+      </div>
+
+      {/* Tabs Navigation */}
+      <div className="flex border-b border-slate-200 dark:border-slate-800 space-x-6 text-sm font-bold">
+        <button
+          onClick={() => setActiveTab('grid')}
+          className={`pb-3 flex items-center gap-2 border-b-2 transition ${
+            activeTab === 'grid'
+              ? 'border-orange-500 text-orange-600 dark:text-orange-400'
+              : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+          }`}
+        >
+          <Boxes className="h-4 w-4" />
+          <span>Interactive Location Grid & Entry</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('reconcile')}
+          className={`pb-3 flex items-center gap-2 border-b-2 transition ${
+            activeTab === 'reconcile'
+              ? 'border-orange-500 text-orange-600 dark:text-orange-400'
+              : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+          }`}
+        >
+          <Calendar className="h-4 w-4" />
+          <span>Count-Window Reconciliation & Go-Live</span>
+          {reconciliationTableItems.length > 0 && (
+            <span className="rounded-full bg-amber-100 text-amber-800 px-2 py-0.2 text-[10px] font-black">
+              {reconciliationTableItems.length} Pending
+            </span>
+          )}
+        </button>
+
+        <button
+          onClick={() => setActiveTab('ledger')}
+          className={`pb-3 flex items-center gap-2 border-b-2 transition ${
+            activeTab === 'ledger'
+              ? 'border-orange-500 text-orange-600 dark:text-orange-400'
+              : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+          }`}
+        >
+          <FileSpreadsheet className="h-4 w-4" />
+          <span>All Counted Entries Ledger ({locationStockEntries.length})</span>
+        </button>
+      </div>
+
+      {/* ===================================================================== */}
+      {/* TAB 1: INTERACTIVE LOCATION GRID & INLINE ENTRY                      */}
+      {/* ===================================================================== */}
+      {activeTab === 'grid' && (
+        <div className="space-y-6">
+          {/* Filter Bar */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              {[
+                { id: 'ALL', label: 'All Locations' },
+                { id: 'RACK', label: 'Steel Racks (A–G)' },
+                { id: 'PALLET', label: 'Pallet Lines (H–P)' },
+                { id: 'BIN', label: 'Storage Bins (BIN-1–30)' },
+              ].map(f => (
+                <button
+                  key={f.id}
+                  onClick={() => setZoneFilter(f.id as any)}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                    zoneFilter === f.id
+                      ? 'bg-orange-600 text-white shadow-2xs'
+                      : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-800 dark:text-slate-300'
+                  }`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="relative w-full sm:w-72">
+              <Search className="h-4 w-4 text-slate-400 absolute left-3 top-2.5" />
+              <input
+                type="text"
+                placeholder="Search location (e.g. A2, H4, BIN-5)..."
+                value={searchLocationQuery}
+                onChange={(e) => setSearchLocationQuery(e.target.value)}
+                className="w-full rounded-xl border border-slate-200 bg-white pl-9 pr-3 py-2 text-xs text-slate-900 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              />
+            </div>
+          </div>
+
+          {/* Location Cards Grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-3">
+            {filteredLocations.map(loc => {
+              const stats = locationStatsMap.get(loc.code) || { skuCount: 0, totalUnits: 0 };
+              const isSelected = selectedLocation?.code === loc.code;
+              const hasItems = stats.skuCount > 0;
+
+              return (
+                <div
+                  key={loc.code}
+                  onClick={() => setSelectedLocation(loc)}
+                  className={`flex flex-col justify-between p-3 rounded-xl border-2 cursor-pointer transition select-none ${
+                    isSelected
+                      ? 'border-orange-500 bg-orange-50/70 shadow-sm dark:bg-orange-950/40'
+                      : hasItems
+                      ? 'border-emerald-300 bg-emerald-50/30 hover:border-emerald-400 dark:border-emerald-800 dark:bg-emerald-950/20'
+                      : 'border-slate-200 bg-white hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-mono text-base font-black text-slate-900 dark:text-white">
+                      {loc.code}
+                    </span>
+                    <span className={`text-[9px] font-bold uppercase rounded px-1.5 py-0.2 ${
+                      loc.type === 'RACK' 
+                        ? 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300' 
+                        : loc.type === 'PALLET'
+                        ? 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300'
+                        : 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300'
+                    }`}>
+                      {loc.type}
+                    </span>
+                  </div>
+
+                  <div className="mt-3">
+                    <div className="text-[11px] font-mono font-bold text-slate-700 dark:text-slate-300">
+                      {stats.totalUnits.toLocaleString()} Pcs
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-mono">
+                      {stats.skuCount} {stats.skuCount === 1 ? 'SKU' : 'SKUs'}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Drawer / Edit Box for Selected Location */}
+          {selectedLocation && (
+            <div className="rounded-2xl border-2 border-orange-400 bg-white p-6 shadow-md dark:border-orange-600 dark:bg-slate-900 animate-in fade-in">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-200 dark:border-slate-800 gap-2">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xl font-black text-slate-900 dark:text-white font-mono">
+                      Location {selectedLocation.code}
+                    </span>
+                    <span className="text-xs font-bold text-slate-500 uppercase">
+                      ({selectedLocation.description})
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Select any SKU from the 1,421 catalog below (or click + Add New SKU) to record the counted physical stock at this location.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setAddNewSkuModalOpen(true)}
+                    className="flex items-center gap-1 rounded-lg border border-orange-200 bg-orange-50 px-2.5 py-1 text-xs font-bold text-orange-700 hover:bg-orange-100 dark:border-orange-900 dark:bg-orange-950 dark:text-orange-300"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    <span>+ Add New SKU</span>
+                  </button>
+                  <button
+                    onClick={() => setSelectedLocation(null)}
+                    className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-slate-500 hover:bg-slate-100 dark:border-slate-700"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+
+              {/* Two Column Layout: Left Search SKU + Right Enter Count */}
+              <div className="mt-5 grid grid-cols-1 lg:grid-cols-12 gap-6">
+                {/* Left: SKU Picker */}
+                <div className="lg:col-span-6 space-y-3">
+                  <div className="relative">
+                    <Search className="h-4 w-4 text-slate-400 absolute left-3 top-2.5" />
+                    <input
+                      type="text"
+                      placeholder="Search SKU name or code to count..."
+                      value={skuSearchQuery}
+                      onChange={(e) => setSkuSearchQuery(e.target.value)}
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50 pl-9 pr-3 py-2 text-xs text-slate-900 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                    />
+                  </div>
+
+                  <div className="max-h-56 overflow-y-auto space-y-1.5 pr-1 border border-slate-100 rounded-xl p-1 dark:border-slate-800">
+                    {searchSkuResults.map(sku => {
+                      const isPicked = selectedSkuForCount?.id === sku.id;
+                      return (
+                        <div
+                          key={sku.id}
+                          onClick={() => setSelectedSkuForCount(sku)}
+                          className={`p-2.5 rounded-lg cursor-pointer text-xs transition border ${
+                            isPicked
+                              ? 'border-orange-500 bg-orange-50/80 font-bold text-orange-900 dark:bg-orange-950/60 dark:text-orange-200'
+                              : 'border-transparent hover:bg-slate-100 text-slate-800 dark:text-slate-200 dark:hover:bg-slate-800'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-mono text-[11px] text-slate-500">{sku.sku_code}</span>
+                            <span className="text-[10px] font-bold uppercase rounded px-1 bg-slate-200 dark:bg-slate-700">{sku.division}</span>
+                          </div>
+                          <div className="truncate mt-0.5">{sku.clean_name}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Right: Quantity & Notes */}
+                <div className="lg:col-span-6 flex flex-col justify-between space-y-4 rounded-xl border border-slate-200 bg-slate-50/50 p-4 dark:border-slate-800 dark:bg-slate-800/40">
+                  {selectedSkuForCount ? (
+                    <div>
+                      <div className="text-[10px] font-bold text-orange-600 uppercase">Selected SKU for {selectedLocation.code}:</div>
+                      <h4 className="font-bold text-slate-900 dark:text-white text-sm mt-0.5">
+                        {selectedSkuForCount.clean_name}
+                      </h4>
+                      <div className="text-xs text-slate-500 font-mono mt-0.5">
+                        {selectedSkuForCount.sku_code} • {selectedSkuForCount.division} • {selectedSkuForCount.main_category}
+                      </div>
+
+                      <div className="mt-4 grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                            Counted Quantity ({selectedSkuForCount.unit})
+                          </label>
+                          <input
+                            type="number"
+                            min={0}
+                            value={countedQtyInput}
+                            onChange={(e) => setCountedQtyInput(e.target.value)}
+                            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 font-mono text-base font-black text-slate-900 focus:outline-hidden dark:bg-slate-900 dark:border-slate-700 dark:text-white"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                            Count Notes (Optional)
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="e.g. 2 boxes + 10 loose"
+                            value={countNotes}
+                            onChange={(e) => setCountNotes(e.target.value)}
+                            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:outline-hidden dark:bg-slate-900 dark:border-slate-700 dark:text-white"
+                          />
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={handleSaveCountEntry}
+                        className="mt-4 w-full rounded-xl bg-orange-600 py-2.5 text-xs font-bold text-white shadow-xs hover:bg-orange-700 active:scale-98 transition flex items-center justify-center gap-2"
+                      >
+                        <CheckCircle2 className="h-4 w-4" />
+                        <span>Save Physical Count in {selectedLocation.code}</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex-1 flex items-center justify-center text-center text-slate-400 text-xs py-10">
+                      Pick an SKU on the left to enter its physical count at {selectedLocation.code}.
+                    </div>
+                  )}
+
+                  {/* Items already recorded in this location */}
+                  <div className="pt-3 border-t border-slate-200 dark:border-slate-800">
+                    <div className="text-[11px] font-bold text-slate-600 dark:text-slate-400 mb-2">
+                      Already Stored in {selectedLocation.code} ({itemsInSelectedLocation.length} items):
+                    </div>
+                    {itemsInSelectedLocation.length === 0 ? (
+                      <span className="text-xs text-slate-400 italic">No items stored here yet.</span>
+                    ) : (
+                      <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                        {itemsInSelectedLocation.map(it => (
+                          <div key={it.id} className="flex items-center justify-between text-xs bg-white p-2 rounded-lg border border-slate-200 dark:bg-slate-900 dark:border-slate-700">
+                            <span className="truncate max-w-[240px] font-medium">{it.cleanName}</span>
+                            <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400 shrink-0">
+                              {it.countedQty.toLocaleString()} Pcs
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ===================================================================== */}
+      {/* TAB 2: COUNT-WINDOW RECONCILIATION & GO-LIVE (PART 5)                 */}
+      {/* ===================================================================== */}
+      {activeTab === 'reconcile' && (
+        <div className="space-y-6">
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs dark:border-slate-800 dark:bg-slate-900">
+            <h2 className="text-lg font-black text-slate-900 dark:text-white flex items-center gap-2">
+              <Calendar className="h-5 w-5 text-orange-600" />
+              <span>Physical Count Window & Outward Sales Order Reconciliation</span>
+            </h2>
+            <p className="text-xs text-slate-500 mt-1">
+              Because counting takes several days while factory dispatches continue, upload outward Sales Orders executed between <strong>Start Date</strong> and <strong>End Date</strong> to subtract them from the counted location stock before making it live!
+            </p>
+
+            {/* Date Pickers & SO Upload */}
+            <div className="mt-5 grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+              <div>
+                <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                  Count Start Date:
+                </label>
+                <input
+                  type="date"
+                  value={reconcileStartDate}
+                  onChange={(e) => {
+                    setReconcileStartDate(e.target.value);
+                    setCountSession({ startDate: e.target.value });
+                  }}
+                  className="w-full rounded-xl border border-slate-300 bg-slate-50 px-3 py-2 text-xs font-mono font-bold text-slate-900 focus:outline-hidden dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                  Count End Date:
+                </label>
+                <input
+                  type="date"
+                  value={reconcileEndDate}
+                  onChange={(e) => {
+                    setReconcileEndDate(e.target.value);
+                    setCountSession({ endDate: e.target.value });
+                  }}
+                  className="w-full rounded-xl border border-slate-300 bg-slate-50 px-3 py-2 text-xs font-mono font-bold text-slate-900 focus:outline-hidden dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                  Upload Dispatched Sales Order (.xlsx):
+                </label>
+                <label className="flex items-center justify-center gap-1.5 rounded-xl border border-dashed border-orange-300 bg-orange-50 px-3 py-2 text-xs font-bold text-orange-700 hover:bg-orange-100 dark:border-orange-900 dark:bg-orange-950 dark:text-orange-300 cursor-pointer transition">
+                  <Upload className="h-4 w-4" />
+                  <span>Upload Tally SO (.xlsx)</span>
+                  <input
+                    type="file"
+                    accept=".xlsx,.xls"
+                    onChange={handleUploadOutwardSO}
+                    className="sr-only"
+                  />
+                </label>
+              </div>
+
+              <div className="flex items-center gap-2 pb-2">
+                <input
+                  type="checkbox"
+                  id="autoIncludeDispatchedCheck"
+                  checked={autoIncludeDispatched}
+                  onChange={(e) => setAutoIncludeDispatched(e.target.checked)}
+                  className="rounded border-slate-300 text-orange-600 focus:ring-0"
+                />
+                <label htmlFor="autoIncludeDispatchedCheck" className="text-xs font-semibold text-slate-700 dark:text-slate-300 cursor-pointer select-none">
+                  Auto-Include Dispatched SOs in App
+                </label>
+              </div>
+            </div>
+          </div>
+
+          {/* Reconciliation Table */}
+          <div className="rounded-2xl border border-slate-200 bg-white shadow-xs dark:border-slate-800 dark:bg-slate-900 overflow-hidden">
+            <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+              <div>
+                <h3 className="font-black text-slate-900 dark:text-white text-sm">
+                  Outward Reconciliation Preview Table
+                </h3>
+                <span className="text-xs text-slate-400 font-mono">
+                  {reconciliationTableItems.length} outward items detected in counting window
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleApplyOutwardDeductions}
+                  disabled={reconciliationTableItems.length === 0}
+                  className="flex items-center gap-1.5 rounded-xl bg-slate-900 px-3.5 py-2 text-xs font-bold text-white hover:bg-slate-800 disabled:opacity-40 transition"
+                >
+                  <Sliders className="h-3.5 w-3.5" />
+                  <span>Apply Outward Deduction to Location Stock</span>
+                </button>
+
+                {currentUser.role === 'admin' && (
+                  <button
+                    onClick={handleMakeLocationStockLive}
+                    className="flex items-center gap-1.5 rounded-xl bg-orange-600 px-4 py-2 text-xs font-bold text-white shadow-xs hover:bg-orange-700 transition"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    <span>Make Location Stock LIVE</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {reconciliationTableItems.length === 0 ? (
+              <div className="p-12 text-center text-slate-400 text-xs">
+                No outward orders currently queued for reconciliation. Upload a Tally Sales Order .xlsx file above.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-200 bg-slate-50 font-bold text-slate-600 dark:border-slate-800 dark:bg-slate-800">
+                      <th className="py-3 px-4">Item Name / SKU</th>
+                      <th className="py-3 px-3">Dispatched Source</th>
+                      <th className="py-3 px-3 text-right">Counted Location Stock</th>
+                      <th className="py-3 px-3 text-right text-rose-600">Outward Qty (-)</th>
+                      <th className="py-3 px-3 text-center">Deduct From Location</th>
+                      <th className="py-3 px-3 text-right text-emerald-600">Final Net Live Stock</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-mono">
+                    {reconciliationTableItems.map(item => (
+                      <tr key={item.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40">
+                        <td className="py-3 px-4 font-sans font-bold text-slate-900 dark:text-white">
+                          <div>{item.cleanName}</div>
+                          <span className="text-[10px] text-slate-400 font-mono">{item.skuCode}</span>
+                        </td>
+                        <td className="py-3 px-3 font-sans text-slate-600 dark:text-slate-400">
+                          {item.source}
+                        </td>
+                        <td className="py-3 px-3 text-right font-bold text-slate-900 dark:text-white">
+                          {item.countedStock.toLocaleString()}
+                        </td>
+                        <td className="py-3 px-3 text-right font-bold text-rose-600">
+                          -{item.outwardQty.toLocaleString()}
+                        </td>
+                        <td className="py-3 px-3 text-center">
+                          <select
+                            value={selectedReconcileLocations[item.id] || item.primaryLocation}
+                            onChange={(e) => setSelectedReconcileLocations({
+                              ...selectedReconcileLocations,
+                              [item.id]: e.target.value
+                            })}
+                            className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-mono font-bold dark:border-slate-700 dark:bg-slate-800"
+                          >
+                            {warehouseLocations.map(l => (
+                              <option key={l.code} value={l.code}>{l.code}</option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="py-3 px-3 text-right font-black text-emerald-600 dark:text-emerald-400 text-sm">
+                          {item.netLiveStock.toLocaleString()}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ===================================================================== */}
+      {/* TAB 3: ALL COUNTED ENTRIES LEDGER                                    */}
+      {/* ===================================================================== */}
+      {activeTab === 'ledger' && (
+        <div className="rounded-2xl border border-slate-200 bg-white shadow-xs dark:border-slate-800 dark:bg-slate-900 overflow-hidden">
+          <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+            <div>
+              <h3 className="font-black text-slate-900 dark:text-white text-sm">
+                Physical Count Entries Audit Ledger ({locationStockEntries.length})
+              </h3>
+              <p className="text-xs text-slate-500">Every counted item across Racks, Pallets, and Bins.</p>
+            </div>
+
+            {locationStockEntries.length > 0 && currentUser.role === 'admin' && (
+              <button
+                onClick={() => {
+                  if (confirm('Clear all physical location count entries?')) {
+                    clearLocationStockEntries();
+                    showStatus('success', 'Cleared all location entries.');
+                  }
+                }}
+                className="flex items-center gap-1 text-xs font-bold text-rose-600 hover:text-rose-800"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                <span>Clear Count Entries</span>
+              </button>
+            )}
+          </div>
+
+          {locationStockEntries.length === 0 ? (
+            <div className="p-12 text-center text-slate-400 text-xs">
+              No physical count entries recorded yet. Upload filled Excel or click any location in the Grid to enter counts.
+            </div>
+          ) : (
+            <div className="overflow-x-auto max-h-[600px]">
+              <table className="w-full text-left border-collapse text-xs font-sans">
+                <thead>
+                  <tr className="border-b border-slate-200 bg-slate-50 font-bold text-slate-600 dark:border-slate-800 dark:bg-slate-800 sticky top-0">
+                    <th className="py-3 px-4">Location Code</th>
+                    <th className="py-3 px-3">SKU Code</th>
+                    <th className="py-3 px-4">Item Name</th>
+                    <th className="py-3 px-2 text-center">Division</th>
+                    <th className="py-3 px-3 text-right">Counted Qty</th>
+                    <th className="py-3 px-3">Counted By</th>
+                    <th className="py-3 px-3">Notes</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {locationStockEntries.map(e => (
+                    <tr key={e.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40">
+                      <td className="py-2.5 px-4 font-mono font-black text-orange-600 dark:text-orange-400">
+                        {e.locationCode}
+                      </td>
+                      <td className="py-2.5 px-3 font-mono font-bold text-slate-700 dark:text-slate-300">
+                        {e.skuCode}
+                      </td>
+                      <td className="py-2.5 px-4 font-bold text-slate-900 dark:text-white">
+                        {e.cleanName}
+                      </td>
+                      <td className="py-2.5 px-2 text-center font-mono font-bold">
+                        <span className="rounded px-1.5 py-0.2 bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                          {e.division}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono font-black text-slate-900 dark:text-white">
+                        {e.countedQty.toLocaleString()} Pcs
+                      </td>
+                      <td className="py-2.5 px-3 text-slate-500">
+                        {e.countedBy}
+                      </td>
+                      <td className="py-2.5 px-3 text-slate-400 truncate max-w-[200px]">
+                        {e.notes || '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ===================================================================== */}
+      {/* ADD NEW LOCATION MODAL (RACK / PALLET LINE / BINS)                    */}
+      {/* ===================================================================== */}
+      {isAddLocationModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+            <h3 className="text-lg font-black text-slate-900 dark:text-white flex items-center gap-2">
+              <Plus className="h-5 w-5 text-orange-600" />
+              <span>+ Add New Warehouse Location</span>
+            </h3>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Expand warehouse capacity with new Steel Racks, Pallet Lines, or Storage Bins.
+            </p>
+
+            <form onSubmit={handleCreateNewLocations} className="mt-5 space-y-4">
+              <div>
+                <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                  Location Type:
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { id: 'RACK', label: 'Steel Rack' },
+                    { id: 'PALLET', label: 'Pallet Line' },
+                    { id: 'BIN', label: 'Storage Bins' },
+                  ].map(t => (
+                    <button
+                      type="button"
+                      key={t.id}
+                      onClick={() => setNewLocType(t.id as any)}
+                      className={`p-2.5 rounded-xl border text-xs font-bold transition ${
+                        newLocType === t.id
+                          ? 'border-orange-500 bg-orange-50 text-orange-800 dark:bg-orange-950 dark:text-orange-200'
+                          : 'border-slate-200 bg-white text-slate-600 dark:border-slate-700 dark:bg-slate-800'
+                      }`}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {newLocType === 'RACK' && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                      Rack Letter/Code:
+                    </label>
+                    <input
+                      type="text"
+                      value={newLocCode}
+                      onChange={(e) => setNewLocCode(e.target.value.toUpperCase())}
+                      placeholder="e.g. AA or G"
+                      className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-mono font-bold dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                      Shelves (Default 3):
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={6}
+                      value={newLocCount}
+                      onChange={(e) => setNewLocCount(parseInt(e.target.value, 10) || 3)}
+                      className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-mono font-bold dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {newLocType === 'PALLET' && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                      Line Letter/Code:
+                    </label>
+                    <input
+                      type="text"
+                      value={newLocCode}
+                      onChange={(e) => setNewLocCode(e.target.value.toUpperCase())}
+                      placeholder="e.g. Q or R"
+                      className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-mono font-bold dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                      Pallets Count (Default 6):
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={12}
+                      value={newLocCount}
+                      onChange={(e) => setNewLocCount(parseInt(e.target.value, 10) || 6)}
+                      className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-mono font-bold dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {newLocType === 'BIN' && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                      Start Bin Number:
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={newBinStart}
+                      onChange={(e) => setNewBinStart(parseInt(e.target.value, 10) || 31)}
+                      className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-mono font-bold dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                      End Bin Number:
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={newBinEnd}
+                      onChange={(e) => setNewBinEnd(parseInt(e.target.value, 10) || 50)}
+                      className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-mono font-bold dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsAddLocationModalOpen(false)}
+                  className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="rounded-xl bg-orange-600 px-4 py-2 text-xs font-bold text-white hover:bg-orange-700 shadow-xs"
+                >
+                  Create Locations
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};

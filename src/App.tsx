@@ -8,11 +8,15 @@ import { AuditView } from './components/AuditView';
 import { LowStockView } from './components/LowStockView';
 import { TallySyncView } from './components/TallySyncView';
 import { SalesDispatchView } from './components/SalesDispatchView';
+import { LocationStockView } from './components/LocationStockView';
 import { CommandPalette } from './components/CommandPalette';
 import { SkuInspectorDrawer } from './components/SkuInspectorDrawer';
 import { StockTransactionModal } from './components/StockTransactionModal';
 import { UpdateWriteOffModal } from './components/UpdateWriteOffModal';
 import { KeyboardShortcutsModal } from './components/KeyboardShortcutsModal';
+import { AddNewSkuModal } from './components/AddNewSkuModal';
+import { UserManagementModal } from './components/UserManagementModal';
+import { CloudSyncModal } from './components/CloudSyncModal';
 
 export const App: React.FC = () => {
   const { 
@@ -66,6 +70,7 @@ export const App: React.FC = () => {
         <main className="flex-1 overflow-y-auto">
           {activeModule === 'stock-master' && <StockMasterView />}
           {activeModule === 'sales-dispatch' && <SalesDispatchView />}
+          {activeModule === 'location-stock' && <LocationStockView />}
           {activeModule === 'stock-entry' && <StockEntryView />}
           {activeModule === 'write-off-audit' && <AuditView />}
           {(activeModule === 'stock-alerts' || activeModule === ('low-stock-alerts' as any)) && <LowStockView />}
@@ -79,6 +84,9 @@ export const App: React.FC = () => {
       <StockTransactionModal />
       <UpdateWriteOffModal />
       <KeyboardShortcutsModal />
+      <AddNewSkuModal />
+      <UserManagementModal />
+      <CloudSyncModal />
     </div>
   );
 };

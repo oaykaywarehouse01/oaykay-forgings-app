@@ -11,21 +11,23 @@ export const StockTransactionModal: React.FC = () => {
   } = useInventoryStore();
 
   const [type, setType] = useState<TransactionType>('STOCK_IN');
-  const [quantity, setQuantity] = useState<number>(50);
+  const [quantityInput, setQuantityInput] = useState<string>('50');
   const [reason, setReason] = useState<string>('Production Batch Receipt (Plant 1 Ludhiana)');
   const [operator, setOperator] = useState<string>('Warehouse Lead');
   const [showSuccess, setShowSuccess] = useState<boolean>(false);
 
   if (!stockTransactionModalSku) return null;
 
+  const parsedQty = parseInt(quantityInput, 10) || 0;
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (quantity <= 0) return;
+    if (parsedQty <= 0) return;
 
     recordTransaction(
       stockTransactionModalSku.id,
       type,
-      quantity,
+      parsedQty,
       reason,
       operator
     );
@@ -39,10 +41,10 @@ export const StockTransactionModal: React.FC = () => {
 
   const current = stockTransactionModalSku.current_stock;
   const projectedStock = type === 'STOCK_IN' 
-    ? current + quantity 
-    : type === 'STOCK_OUT' || type === 'SCRAP'
-    ? Math.max(0, current - quantity)
-    : quantity;
+    ? current + parsedQty 
+    : type === 'STOCK_OUT'
+    ? Math.max(0, current - parsedQty)
+    : parsedQty;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/50 backdrop-blur-xs animate-in fade-in duration-150">
@@ -112,8 +114,8 @@ export const StockTransactionModal: React.FC = () => {
               <input
                 type="number"
                 min={1}
-                value={quantity}
-                onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value) || 1))}
+                value={quantityInput}
+                onChange={(e) => setQuantityInput(e.target.value)}
                 className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-mono font-bold text-slate-900 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-white"
               />
             </div>

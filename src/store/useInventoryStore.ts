@@ -10,9 +10,14 @@ import {
   ActiveNavModule, 
   DrillDownState,
   TransactionType,
-  SalesOrderData
+  SalesOrderData,
+  WarehouseLocation,
+  LocationStockEntry,
+  CountSession,
+  AppUser
 } from '../types/inventory';
 import { InventorySearchEngine } from '../lib/searchEngine';
+import { generateInitialWarehouseLocations, normalizeLocationCode } from '../lib/locationUtils';
 import * as XLSX from 'xlsx';
 
 export interface DeductedSOInfo {
@@ -32,14 +37,90 @@ export interface DeductedSOInfo {
   soDataSnapshot?: SalesOrderData;
 }
 
+export const defaultUsers: AppUser[] = [
+  {
+    id: 'user-admin',
+    name: 'S. Singh (Admin & Director)',
+    role: 'admin',
+    pin: '1234',
+    avatarColor: 'bg-orange-600',
+    permissions: {
+      canEditStockMaster: true,
+      canDispatchSO: true,
+      canInwardStock: true,
+      canCountLocations: true,
+      canGoLiveLocations: true,
+      canManageUsers: true,
+      canResetData: true,
+    }
+  },
+  {
+    id: 'user-dispatch',
+    name: 'Rajesh Kumar (Dispatch Manager)',
+    role: 'dispatch_manager',
+    pin: '2222',
+    avatarColor: 'bg-emerald-600',
+    permissions: {
+      canEditStockMaster: false,
+      canDispatchSO: true,
+      canInwardStock: false,
+      canCountLocations: false,
+      canGoLiveLocations: false,
+      canManageUsers: false,
+      canResetData: false,
+    }
+  },
+  {
+    id: 'user-storekeeper',
+    name: 'P. Sharma (Inward Storekeeper)',
+    role: 'inward_storekeeper',
+    pin: '3333',
+    avatarColor: 'bg-indigo-600',
+    permissions: {
+      canEditStockMaster: false,
+      canDispatchSO: false,
+      canInwardStock: true,
+      canCountLocations: true,
+      canGoLiveLocations: false,
+      canManageUsers: false,
+      canResetData: false,
+    }
+  },
+  {
+    id: 'user-count',
+    name: 'M. Verma (Godown Count Staff)',
+    role: 'count_staff',
+    pin: '4444',
+    avatarColor: 'bg-amber-600',
+    permissions: {
+      canEditStockMaster: false,
+      canDispatchSO: false,
+      canInwardStock: false,
+      canCountLocations: true,
+      canGoLiveLocations: false,
+      canManageUsers: false,
+      canResetData: false,
+    }
+  }
+];
+
 interface InventoryStore {
-  // Data
+  // Master Inventory Data
   skus: SkuItem[];
   categories: CategoryGroup[];
   divisions: Record<DivisionCode, DivisionInfo>;
   transactions: Transaction[];
   stats: InventoryStats;
   deductedSalesOrders: Record<string, DeductedSOInfo>;
+
+  // Warehouse Location & Physical Count Data (100% Independent until Live Sync)
+  warehouseLocations: WarehouseLocation[];
+  locationStockEntries: LocationStockEntry[];
+  countSession: CountSession;
+
+  // Role-Based Users & Permissions
+  users: AppUser[];
+  currentUser: AppUser;
 
   // Search Engine Instance
   searchEngine: InventorySearchEngine;
@@ -55,11 +136,14 @@ interface InventoryStore {
   isCommandPaletteOpen: boolean;
   isKeyboardShortcutsOpen: boolean;
   isSidebarOpen: boolean;
+  isAddNewSkuModalOpen: boolean;
+  isUserManagementModalOpen: boolean;
+  isCloudSyncModalOpen: boolean;
   stockTransactionModalSku: SkuItem | null;
   updateWriteOffModalCategory: CategoryGroup | null;
   isDarkMode: boolean;
 
-  // Actions
+  // Navigation Actions
   setActiveModule: (module: ActiveNavModule) => void;
   setDrillDown: (state: Partial<DrillDownState>) => void;
   navigateToLevel: (level: 1 | 2 | 3 | 4) => void;
@@ -70,19 +154,44 @@ interface InventoryStore {
   setKeyboardShortcutsOpen: (open: boolean) => void;
   toggleSidebar: () => void;
   setSidebarOpen: (open: boolean) => void;
+  setAddNewSkuModalOpen: (open: boolean) => void;
+  setUserManagementModalOpen: (open: boolean) => void;
+  setCloudSyncModalOpen: (open: boolean) => void;
   setStockTransactionModalSku: (sku: SkuItem | null) => void;
   setUpdateWriteOffModalCategory: (cat: CategoryGroup | null) => void;
   toggleDarkMode: () => void;
 
-  // Inventory Operations
+  // User Actions
+  setCurrentUserByPin: (pin: string) => { success: boolean; message: string; user?: AppUser };
+  addUser: (user: Omit<AppUser, 'id'>) => void;
+  updateUser: (id: string, updates: Partial<AppUser>) => void;
+  deleteUser: (id: string) => void;
+
+  // Master Inventory Operations
   quickAdjustStock: (skuId: string, delta: number) => void;
   recordTransaction: (
     skuId: string, 
     type: TransactionType, 
     quantity: number, 
     reason: string, 
-    performedBy: string
+    performedBy: string,
+    notes?: string,
+    location?: string,
+    referenceNo?: string
   ) => void;
+  addNewSku: (item: {
+    clean_name: string;
+    division: DivisionCode;
+    main_category: string;
+    sub_category: string;
+    product_group?: string;
+    unit?: string;
+    size_spec?: string;
+    material_and_tier?: string;
+    pack_type?: string;
+    initial_stock?: number;
+    location_bin?: string;
+  }) => SkuItem;
   updateCategoryWriteOffDate: (groupId: string, newDate: string, auditNote?: string) => void;
   updateSkuWriteOffDate: (skuId: string, newDate: string) => void;
   batchUpdateWriteOffDate: (division: DivisionCode, mainCat: string, newDate: string) => void;
@@ -91,9 +200,27 @@ interface InventoryStore {
   importStockExcel: (file: File) => Promise<{ success: boolean; message: string; stats?: any }>;
   deductSalesOrderStock: (so: SalesOrderData) => { success: boolean; message: string };
   undoDeductSalesOrderStock: (piNumber: string) => { success: boolean; message: string };
+
+  // Warehouse Location Operations
+  addWarehouseLocation: (loc: WarehouseLocation | WarehouseLocation[]) => void;
+  saveLocationStockEntry: (entry: Omit<LocationStockEntry, 'id' | 'countedAt'>) => void;
+  batchSaveLocationStockEntries: (entries: Array<Omit<LocationStockEntry, 'id' | 'countedAt'>>) => void;
+  clearLocationStockEntries: () => void;
+  setCountSession: (session: Partial<CountSession>) => void;
+  applyOutwardReconciliation: (
+    piNumber: string, 
+    items: Array<{ skuCode: string; cleanName: string; outwardQty: number; deductFromLocation: string }>
+  ) => { success: boolean; message: string };
+  syncLocationStockToMaster: () => { 
+    success: boolean; 
+    message: string; 
+    updatedCount: number; 
+    totalLiveUnits: number 
+  };
+  restoreFullDatabase: (backupData: any) => { success: boolean; message: string };
 }
 
-const computeStats = (skus: SkuItem[]): InventoryStats => {
+export const computeStats = (skus: SkuItem[]): InventoryStats => {
   const totalStock = skus.reduce((acc, s) => acc + Math.round(s.current_stock), 0);
   return {
     total_skus: skus.length,
@@ -108,21 +235,40 @@ const computeStats = (skus: SkuItem[]): InventoryStats => {
   };
 };
 
-// Storage key updated for 100% whole integer dataset (1,421 SKUs, 3,812,304 Stock)
-const STORAGE_KEY = 'okf_inventory_store_qty_whole_v1';
+const STORAGE_KEY = 'okf_inventory_store_v3_master';
+
+const saveStorage = (data: any) => {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  } catch (e) {
+    console.warn('Storage save warning', e);
+  }
+};
 
 const getInitialState = () => {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
       const parsed = JSON.parse(saved);
-      if (parsed.skus && parsed.skus.length === 1421) {
+      if (parsed.skus && parsed.skus.length >= 1421) {
         return {
           skus: parsed.skus as SkuItem[],
           categories: parsed.categories as CategoryGroup[],
           divisions: parsed.divisions as Record<DivisionCode, DivisionInfo>,
-          transactions: parsed.transactions as Transaction[],
+          transactions: (parsed.transactions || []) as Transaction[],
           deductedSalesOrders: (parsed.deductedSalesOrders || {}) as Record<string, DeductedSOInfo>,
+          warehouseLocations: (parsed.warehouseLocations && parsed.warehouseLocations.length > 0)
+            ? parsed.warehouseLocations as WarehouseLocation[]
+            : generateInitialWarehouseLocations(),
+          locationStockEntries: (parsed.locationStockEntries || []) as LocationStockEntry[],
+          countSession: (parsed.countSession || {
+            startDate: new Date().toISOString().slice(0, 10),
+            endDate: new Date().toISOString().slice(0, 10),
+            isActive: false,
+            reconciledOrders: []
+          }) as CountSession,
+          users: (parsed.users && parsed.users.length > 0) ? parsed.users as AppUser[] : defaultUsers,
+          currentUser: (parsed.currentUser && parsed.currentUser.role) ? parsed.currentUser as AppUser : defaultUsers[0]
         };
       }
     }
@@ -136,6 +282,16 @@ const getInitialState = () => {
     divisions: initialSeedData.divisions as Record<DivisionCode, DivisionInfo>,
     transactions: initialSeedData.initial_transactions as Transaction[],
     deductedSalesOrders: {} as Record<string, DeductedSOInfo>,
+    warehouseLocations: generateInitialWarehouseLocations(),
+    locationStockEntries: [] as LocationStockEntry[],
+    countSession: {
+      startDate: new Date().toISOString().slice(0, 10),
+      endDate: new Date().toISOString().slice(0, 10),
+      isActive: false,
+      reconciledOrders: []
+    } as CountSession,
+    users: defaultUsers,
+    currentUser: defaultUsers[0]
   };
 };
 
@@ -149,6 +305,11 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
   transactions: initial.transactions,
   stats: computeStats(initial.skus),
   deductedSalesOrders: initial.deductedSalesOrders,
+  warehouseLocations: initial.warehouseLocations,
+  locationStockEntries: initial.locationStockEntries,
+  countSession: initial.countSession,
+  users: initial.users,
+  currentUser: initial.currentUser,
   searchEngine: initialEngine,
 
   activeModule: 'stock-master',
@@ -158,7 +319,7 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
     division: null,
     mainCategory: null,
     subCategory: null,
-    productGroup: null,
+    productGroup: null
   },
   selectedSku: null,
   globalSearchQuery: '',
@@ -166,38 +327,34 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
 
   isCommandPaletteOpen: false,
   isKeyboardShortcutsOpen: false,
-  isSidebarOpen: false,
+  isSidebarOpen: true,
+  isAddNewSkuModalOpen: false,
+  isUserManagementModalOpen: false,
+  isCloudSyncModalOpen: false,
   stockTransactionModalSku: null,
   updateWriteOffModalCategory: null,
-  isDarkMode: typeof document !== 'undefined' ? (document.documentElement.classList.contains('dark') || localStorage.getItem('okf_theme') === 'dark') : false,
+  isDarkMode: false,
 
   setActiveModule: (module) => set({ activeModule: module }),
-
-  setDrillDown: (partial) => {
-    set(state => ({
-      drillDown: { ...state.drillDown, ...partial }
-    }));
-  },
-
-  navigateToLevel: (level) => {
-    set(state => {
-      const dd = { ...state.drillDown, level };
-      if (level === 1) {
-        dd.division = null;
-        dd.mainCategory = null;
-        dd.subCategory = null;
-        dd.productGroup = null;
-      } else if (level === 2) {
-        dd.mainCategory = null;
-        dd.subCategory = null;
-        dd.productGroup = null;
-      } else if (level === 3) {
-        dd.subCategory = null;
-        dd.productGroup = null;
-      }
-      return { drillDown: dd };
-    });
-  },
+  setDrillDown: (partial) => set(state => ({ drillDown: { ...state.drillDown, ...partial } })),
+  
+  navigateToLevel: (level) => set(state => {
+    const nextDrill = { ...state.drillDown, level };
+    if (level === 1) {
+      nextDrill.division = null;
+      nextDrill.mainCategory = null;
+      nextDrill.subCategory = null;
+      nextDrill.productGroup = null;
+    } else if (level === 2) {
+      nextDrill.mainCategory = null;
+      nextDrill.subCategory = null;
+      nextDrill.productGroup = null;
+    } else if (level === 3) {
+      nextDrill.subCategory = null;
+      nextDrill.productGroup = null;
+    }
+    return { drillDown: nextDrill };
+  }),
 
   setSelectedSku: (sku) => set({ selectedSku: sku }),
   setGlobalSearchQuery: (query) => set({ globalSearchQuery: query }),
@@ -206,35 +363,65 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
   setKeyboardShortcutsOpen: (open) => set({ isKeyboardShortcutsOpen: open }),
   toggleSidebar: () => set(state => ({ isSidebarOpen: !state.isSidebarOpen })),
   setSidebarOpen: (open) => set({ isSidebarOpen: open }),
+  setAddNewSkuModalOpen: (open) => set({ isAddNewSkuModalOpen: open }),
+  setUserManagementModalOpen: (open) => set({ isUserManagementModalOpen: open }),
+  setCloudSyncModalOpen: (open) => set({ isCloudSyncModalOpen: open }),
   setStockTransactionModalSku: (sku) => set({ stockTransactionModalSku: sku }),
   setUpdateWriteOffModalCategory: (cat) => set({ updateWriteOffModalCategory: cat }),
-  
-  toggleDarkMode: () => {
-    set(state => {
-      const next = !state.isDarkMode;
-      if (typeof document !== 'undefined') {
-        if (next) {
-          document.documentElement.classList.add('dark');
-          localStorage.setItem('okf_theme', 'dark');
-        } else {
-          document.documentElement.classList.remove('dark');
-          localStorage.setItem('okf_theme', 'light');
-        }
-      }
-      return { isDarkMode: next };
-    });
+  toggleDarkMode: () => set(state => ({ isDarkMode: !state.isDarkMode })),
+
+  // User System Operations
+  setCurrentUserByPin: (pin: string) => {
+    const state = get();
+    const user = state.users.find(u => u.pin === pin.trim());
+    if (user) {
+      set({ currentUser: user });
+      saveStorage({
+        ...state,
+        currentUser: user
+      });
+      return { success: true, message: `Switched user to ${user.name} (${user.role.toUpperCase()})`, user };
+    }
+    return { success: false, message: 'Invalid PIN. Please check and try again.' };
   },
 
+  addUser: (userData) => {
+    const state = get();
+    const newUser: AppUser = {
+      ...userData,
+      id: `user-${Date.now()}`
+    };
+    const nextUsers = [...state.users, newUser];
+    set({ users: nextUsers });
+    saveStorage({ ...state, users: nextUsers });
+  },
+
+  updateUser: (id, updates) => {
+    const state = get();
+    const nextUsers = state.users.map(u => u.id === id ? { ...u, ...updates } : u);
+    const nextCurrentUser = state.currentUser.id === id ? { ...state.currentUser, ...updates } : state.currentUser;
+    set({ users: nextUsers, currentUser: nextCurrentUser });
+    saveStorage({ ...state, users: nextUsers, currentUser: nextCurrentUser });
+  },
+
+  deleteUser: (id) => {
+    const state = get();
+    if (state.users.length <= 1) return;
+    const nextUsers = state.users.filter(u => u.id !== id);
+    const nextCurrentUser = state.currentUser.id === id ? nextUsers[0] : state.currentUser;
+    set({ users: nextUsers, currentUser: nextCurrentUser });
+    saveStorage({ ...state, users: nextUsers, currentUser: nextCurrentUser });
+  },
+
+  // Inventory Adjustments & Transactions
   quickAdjustStock: (skuId, delta) => {
     const state = get();
     const sku = state.skus.find(s => s.id === skuId);
     if (!sku) return;
 
-    const intDelta = Math.round(delta);
     const prevStock = Math.round(sku.current_stock);
+    const intDelta = Math.round(delta);
     const newStock = prevStock + intDelta;
-    const qtyChange = Math.abs(intDelta);
-    const txnType: TransactionType = intDelta > 0 ? 'STOCK_IN' : 'STOCK_OUT';
 
     const updatedSku: SkuItem = {
       ...sku,
@@ -244,6 +431,9 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
       last_modified: new Date().toISOString()
     };
 
+    const txnType: TransactionType = intDelta > 0 ? 'STOCK_IN' : 'STOCK_OUT';
+    const qtyChange = Math.abs(intDelta);
+
     const newTxn: Transaction = {
       id: `TXN-${Date.now().toString().slice(-6)}`,
       sku_code: sku.sku_code,
@@ -251,7 +441,7 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
       type: txnType,
       quantity: qtyChange,
       reason: intDelta > 0 ? 'Quick Inline Stock Increment (+)' : 'Quick Inline Stock Decrement (-)',
-      performed_by: 'Warehouse Staff',
+      performed_by: state.currentUser?.name || 'Warehouse Staff',
       timestamp: new Date().toISOString(),
       prev_stock: prevStock,
       new_stock: newStock,
@@ -261,7 +451,6 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
     const nextTransactions = [newTxn, ...state.transactions];
     const nextStats = computeStats(nextSkus);
 
-    // Update division total stock as whole integer
     const nextDivisions = { ...state.divisions };
     if (nextDivisions[sku.division]) {
       const divStock = nextSkus.filter(s => s.division === sku.division).reduce((a, s) => a + Math.round(s.current_stock), 0);
@@ -281,20 +470,21 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
       selectedSku: state.selectedSku?.id === skuId ? updatedSku : state.selectedSku,
     });
 
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        skus: nextSkus,
-        categories: state.categories,
-        divisions: nextDivisions,
-        transactions: nextTransactions,
-        deductedSalesOrders: state.deductedSalesOrders,
-      }));
-    } catch (e) {
-      console.warn('Storage save error', e);
-    }
+    saveStorage({
+      skus: nextSkus,
+      categories: state.categories,
+      divisions: nextDivisions,
+      transactions: nextTransactions,
+      deductedSalesOrders: state.deductedSalesOrders,
+      warehouseLocations: state.warehouseLocations,
+      locationStockEntries: state.locationStockEntries,
+      countSession: state.countSession,
+      users: state.users,
+      currentUser: state.currentUser
+    });
   },
 
-  recordTransaction: (skuId, type, quantity, reason, performedBy) => {
+  recordTransaction: (skuId, type, quantity, reason, performedBy, notes, location, referenceNo) => {
     const state = get();
     const sku = state.skus.find(s => s.id === skuId);
     if (!sku) return;
@@ -307,7 +497,7 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
       newStock = prevStock + intQty;
     } else if (type === 'STOCK_OUT') {
       newStock = prevStock - intQty;
-    } else if (type === 'AUDIT_ADJUSTMENT') {
+    } else if (type === 'AUDIT_ADJUSTMENT' || type === 'LOCATION_RECONCILIATION') {
       newStock = intQty;
     }
 
@@ -315,6 +505,7 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
       ...sku,
       current_stock: newStock,
       quantity: newStock,
+      location_bin: location ? location : sku.location_bin,
       status: newStock === 0 ? 'Zero Stock' : (newStock < 0 ? 'Negative' : 'In Stock'),
       last_modified: new Date().toISOString(),
       last_audit_date: type === 'AUDIT_ADJUSTMENT' ? new Date().toLocaleDateString('en-GB') : sku.last_audit_date
@@ -327,10 +518,15 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
       type,
       quantity: intQty,
       reason: reason || `${type} operation`,
-      performed_by: performedBy || 'Operator',
+      performed_by: performedBy || state.currentUser?.name || 'Operator',
       timestamp: new Date().toISOString(),
       prev_stock: prevStock,
       new_stock: newStock,
+      notes: notes || undefined,
+      location: location || sku.location_bin,
+      referenceNo: referenceNo || undefined,
+      division: sku.division,
+      main_category: sku.main_category
     };
 
     const nextSkus = state.skus.map(s => s.id === skuId ? updatedSku : s);
@@ -346,28 +542,198 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
       };
     }
 
+    // If a specific location was provided for Stock IN, also record or update that location's entry
+    let nextLocationEntries = [...state.locationStockEntries];
+    if (location && type === 'STOCK_IN') {
+      const normLoc = normalizeLocationCode(location);
+      const existingEntryIdx = nextLocationEntries.findIndex(e => e.skuId === sku.id && e.locationCode === normLoc);
+      if (existingEntryIdx !== -1) {
+        nextLocationEntries[existingEntryIdx] = {
+          ...nextLocationEntries[existingEntryIdx],
+          countedQty: nextLocationEntries[existingEntryIdx].countedQty + intQty,
+          countedAt: new Date().toISOString(),
+          notes: notes || nextLocationEntries[existingEntryIdx].notes
+        };
+      } else {
+        nextLocationEntries.push({
+          id: `LOC-ENT-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+          skuId: sku.id,
+          skuCode: sku.sku_code,
+          cleanName: sku.clean_name,
+          division: sku.division,
+          mainCategory: sku.main_category,
+          locationCode: normLoc,
+          countedQty: intQty,
+          countedAt: new Date().toISOString(),
+          countedBy: performedBy || state.currentUser?.name || 'Staff',
+          notes: notes || 'Stock IN auto-entry'
+        });
+      }
+    }
+
     state.searchEngine.updateData(nextSkus);
 
     set({
       skus: nextSkus,
       divisions: nextDivisions,
       transactions: nextTransactions,
+      locationStockEntries: nextLocationEntries,
       stats: nextStats,
       selectedSku: state.selectedSku?.id === skuId ? updatedSku : state.selectedSku,
       stockTransactionModalSku: null
     });
 
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        skus: nextSkus,
-        categories: state.categories,
-        divisions: nextDivisions,
-        transactions: nextTransactions,
-        deductedSalesOrders: state.deductedSalesOrders,
-      }));
-    } catch (e) {
-      console.warn('Storage save error', e);
+    saveStorage({
+      skus: nextSkus,
+      categories: state.categories,
+      divisions: nextDivisions,
+      transactions: nextTransactions,
+      deductedSalesOrders: state.deductedSalesOrders,
+      warehouseLocations: state.warehouseLocations,
+      locationStockEntries: nextLocationEntries,
+      countSession: state.countSession,
+      users: state.users,
+      currentUser: state.currentUser
+    });
+  },
+
+  // PART 6: Global Add New Item / SKU
+  addNewSku: (item) => {
+    const state = get();
+    const div = item.division;
+
+    // Find highest current SKU number for this division
+    const divSkus = state.skus.filter(s => s.division === div);
+    let maxNum = 0;
+    divSkus.forEach(s => {
+      const m = s.sku_code.match(/OKF-[A-Z]+-(\d+)/);
+      if (m) {
+        const val = parseInt(m[1], 10);
+        if (!isNaN(val) && val > maxNum) maxNum = val;
+      }
+    });
+    const nextCodeNum = maxNum + 1;
+    const skuCode = `OKF-${div}-${String(nextCodeNum).padStart(4, '0')}`;
+    const initialQty = Math.round(item.initial_stock || 0);
+    const locBin = item.location_bin ? normalizeLocationCode(item.location_bin) : 'A1';
+
+    const cleanName = item.clean_name.trim();
+
+    const newSku: SkuItem = {
+      id: `sku-new-${Date.now()}`,
+      sku_code: skuCode,
+      excel_row: state.skus.length + 1,
+      segment: 'Domestic',
+      division: div,
+      main_category: item.main_category.trim(),
+      sub_category: item.sub_category.trim(),
+      product_group: (item.product_group || item.sub_category).trim(),
+      category_path: `Domestic > ${div} > ${item.main_category.trim()} > ${item.sub_category.trim()}`,
+      clean_name: cleanName,
+      size_spec: item.size_spec || 'Standard',
+      material_and_tier: item.material_and_tier || 'Industrial Standard',
+      pack_type: item.pack_type || 'Standard Box',
+      original_tally_name: cleanName,
+      normalized_key: cleanName.toLowerCase().replace(/[\s_]/g, ''),
+      quantity: initialQty,
+      current_stock: initialQty,
+      unit: item.unit || 'Pcs',
+      status: initialQty === 0 ? 'Zero Stock' : (initialQty < 0 ? 'Negative' : 'In Stock'),
+      location_bin: locBin,
+      last_write_off_date: new Date().toLocaleDateString('en-GB'),
+      write_off_source_header: 'New SKU Onboarded',
+      last_audit_date: new Date().toLocaleDateString('en-GB'),
+      last_modified: new Date().toISOString()
+    };
+
+    const nextSkus = [newSku, ...state.skus];
+
+    // Update categories group or add if new
+    let nextCategories = [...state.categories];
+    const catIdx = nextCategories.findIndex(
+      c => c.division === div && c.main_category === newSku.main_category && c.sub_category === newSku.sub_category
+    );
+    if (catIdx !== -1) {
+      nextCategories[catIdx] = {
+        ...nextCategories[catIdx],
+        sku_count: nextCategories[catIdx].sku_count + 1,
+        total_stock: nextCategories[catIdx].total_stock + initialQty
+      };
+    } else {
+      nextCategories.push({
+        group_id: `GRP-${Date.now().toString().slice(-4)}`,
+        division: div,
+        main_category: newSku.main_category,
+        sub_category: newSku.sub_category,
+        product_group: newSku.product_group,
+        last_write_off_date: new Date().toLocaleDateString('en-GB'),
+        original_write_off_header: 'New Category Added',
+        sku_count: 1,
+        total_stock: initialQty
+      });
     }
+
+    // Update division totals
+    const nextDivisions = { ...state.divisions };
+    if (nextDivisions[div]) {
+      const dStock = nextSkus.filter(s => s.division === div).reduce((a, s) => a + Math.round(s.current_stock), 0);
+      nextDivisions[div] = {
+        ...nextDivisions[div],
+        total_skus: nextDivisions[div].total_skus + 1,
+        total_stock: dStock
+      };
+    }
+
+    // Record initial transaction if opening stock > 0
+    let nextTxns = [...state.transactions];
+    if (initialQty > 0) {
+      nextTxns = [
+        {
+          id: `TXN-NEW-${Date.now().toString().slice(-6)}`,
+          sku_code: skuCode,
+          sku_name: cleanName,
+          type: 'STOCK_IN',
+          quantity: initialQty,
+          reason: `New SKU Onboarded with Opening Stock (${locBin})`,
+          performed_by: state.currentUser?.name || 'Administrator',
+          timestamp: new Date().toISOString(),
+          prev_stock: 0,
+          new_stock: initialQty,
+          location: locBin,
+          division: div,
+          main_category: newSku.main_category
+        },
+        ...nextTxns
+      ];
+    }
+
+    const nextStats = computeStats(nextSkus);
+    state.searchEngine.updateData(nextSkus);
+
+    set({
+      skus: nextSkus,
+      categories: nextCategories,
+      divisions: nextDivisions,
+      transactions: nextTxns,
+      stats: nextStats,
+      selectedSku: newSku,
+      isAddNewSkuModalOpen: false
+    });
+
+    saveStorage({
+      skus: nextSkus,
+      categories: nextCategories,
+      divisions: nextDivisions,
+      transactions: nextTxns,
+      deductedSalesOrders: state.deductedSalesOrders,
+      warehouseLocations: state.warehouseLocations,
+      locationStockEntries: state.locationStockEntries,
+      countSession: state.countSession,
+      users: state.users,
+      currentUser: state.currentUser
+    });
+
+    return newSku;
   },
 
   updateCategoryWriteOffDate: (groupId, newDate, auditNote) => {
@@ -399,7 +765,7 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
       type: 'WRITE_OFF_SYNC',
       quantity: group.sku_count,
       reason: auditNote ? `Audit Date Set: ${newDate} - ${auditNote}` : `Write-Off Date Updated to ${newDate}`,
-      performed_by: 'Inventory Auditor',
+      performed_by: state.currentUser?.name || 'Inventory Auditor',
       timestamp: new Date().toISOString(),
       prev_stock: 0,
       new_stock: 0,
@@ -418,17 +784,18 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
       updateWriteOffModalCategory: null
     });
 
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        skus: nextSkus,
-        categories: nextCategories,
-        divisions: state.divisions,
-        transactions: nextTransactions,
-        deductedSalesOrders: state.deductedSalesOrders,
-      }));
-    } catch (e) {
-      console.warn('Storage save error', e);
-    }
+    saveStorage({
+      skus: nextSkus,
+      categories: nextCategories,
+      divisions: state.divisions,
+      transactions: nextTransactions,
+      deductedSalesOrders: state.deductedSalesOrders,
+      warehouseLocations: state.warehouseLocations,
+      locationStockEntries: state.locationStockEntries,
+      countSession: state.countSession,
+      users: state.users,
+      currentUser: state.currentUser
+    });
   },
 
   updateSkuWriteOffDate: (skuId, newDate) => {
@@ -454,17 +821,18 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
       selectedSku: state.selectedSku?.id === skuId ? updatedSku : state.selectedSku
     });
 
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        skus: nextSkus,
-        categories: state.categories,
-        divisions: state.divisions,
-        transactions: state.transactions,
-        deductedSalesOrders: state.deductedSalesOrders,
-      }));
-    } catch (e) {
-      console.warn('Storage save error', e);
-    }
+    saveStorage({
+      skus: nextSkus,
+      categories: state.categories,
+      divisions: state.divisions,
+      transactions: state.transactions,
+      deductedSalesOrders: state.deductedSalesOrders,
+      warehouseLocations: state.warehouseLocations,
+      locationStockEntries: state.locationStockEntries,
+      countSession: state.countSession,
+      users: state.users,
+      currentUser: state.currentUser
+    });
   },
 
   batchUpdateWriteOffDate: (division, mainCat, newDate) => {
@@ -498,17 +866,18 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
       stats: nextStats
     });
 
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        skus: nextSkus,
-        categories: nextCategories,
-        divisions: state.divisions,
-        transactions: state.transactions,
-        deductedSalesOrders: state.deductedSalesOrders,
-      }));
-    } catch (e) {
-      console.warn('Storage save error', e);
-    }
+    saveStorage({
+      skus: nextSkus,
+      categories: nextCategories,
+      divisions: state.divisions,
+      transactions: state.transactions,
+      deductedSalesOrders: state.deductedSalesOrders,
+      warehouseLocations: state.warehouseLocations,
+      locationStockEntries: state.locationStockEntries,
+      countSession: state.countSession,
+      users: state.users,
+      currentUser: state.currentUser
+    });
   },
 
   resetToInitialSeed: () => {
@@ -517,6 +886,7 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
     const categories = initialSeedData.categories_hierarchy as CategoryGroup[];
     const divisions = initialSeedData.divisions as Record<DivisionCode, DivisionInfo>;
     const transactions = initialSeedData.initial_transactions as Transaction[];
+    const locations = generateInitialWarehouseLocations();
     
     const engine = new InventorySearchEngine(skus);
 
@@ -529,7 +899,17 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
       searchEngine: engine,
       selectedSku: null,
       globalSearchQuery: '',
-      deductedSalesOrders: {}
+      deductedSalesOrders: {},
+      warehouseLocations: locations,
+      locationStockEntries: [],
+      countSession: {
+        startDate: new Date().toISOString().slice(0, 10),
+        endDate: new Date().toISOString().slice(0, 10),
+        isActive: false,
+        reconciledOrders: []
+      },
+      users: defaultUsers,
+      currentUser: defaultUsers[0]
     });
   },
 
@@ -558,7 +938,7 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
     const worksheet = XLSX.utils.json_to_sheet(rows);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'OKF Stock Quantity Master');
-    XLSX.writeFile(workbook, `OKF_Stock_Master_1421_SKUs_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    XLSX.writeFile(workbook, `OKF_Stock_Master_${state.skus.length}_SKUs_${new Date().toISOString().slice(0, 10)}.xlsx`);
   },
 
   importStockExcel: async (file: File) => {
@@ -577,8 +957,7 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
             existingMap.set(key, s);
           });
 
-          // Read range
-          const range = XLSX.utils.decode_range(ws['!ref'] || 'A1:C2000');
+          const range = XLSX.utils.decode_range(ws['!ref'] || 'A1:C3000');
           let updatedCount = 0;
           let matchedTotalStock = 0;
 
@@ -592,7 +971,6 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
             const rawName = String(cellA.v).trim();
             const normKey = rawName.replace(/['"]/g, '"').replace(/[\s_]/g, '').toLowerCase();
 
-            // Ignore header rows
             if (rawName.toLowerCase() === 'particulars' || rawName.toLowerCase() === 'grand total') continue;
 
             const existing = existingMap.get(normKey);
@@ -622,7 +1000,6 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
 
           const nextStats = computeStats(nextSkus);
 
-          // Update divisions total stock
           const nextDivisions = { ...state.divisions };
           for (const d of ['DIM', 'DIN', 'DTR'] as DivisionCode[]) {
             const dStock = nextSkus.filter(s => s.division === d).reduce((a, s) => a + Math.round(s.current_stock), 0);
@@ -642,17 +1019,18 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
             stats: nextStats
           });
 
-          try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify({
-              skus: nextSkus,
-              categories: state.categories,
-              divisions: nextDivisions,
-              transactions: state.transactions,
-              deductedSalesOrders: state.deductedSalesOrders,
-            }));
-          } catch (err) {
-            console.warn(err);
-          }
+          saveStorage({
+            skus: nextSkus,
+            categories: state.categories,
+            divisions: nextDivisions,
+            transactions: state.transactions,
+            deductedSalesOrders: state.deductedSalesOrders,
+            warehouseLocations: state.warehouseLocations,
+            locationStockEntries: state.locationStockEntries,
+            countSession: state.countSession,
+            users: state.users,
+            currentUser: state.currentUser
+          });
 
           resolve({
             success: true,
@@ -724,10 +1102,13 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
         reason: isPartial
           ? `Sales Order PI #${so.piNumber} Partial Dispatch (${deductQty} of ${item.orderedQty} ordered) to ${so.partyName}`
           : `Sales Order PI #${so.piNumber} Full Dispatch (${deductQty} Units) to ${so.partyName}`,
-        performed_by: 'Dispatch Staff',
+        performed_by: state.currentUser?.name || 'Dispatch Staff',
         timestamp: new Date().toISOString(),
         prev_stock: prevStock,
-        new_stock: newStock
+        new_stock: newStock,
+        referenceNo: `PI #${so.piNumber}`,
+        division: sku.division,
+        main_category: sku.main_category
       });
     });
 
@@ -777,17 +1158,18 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
       deductedSalesOrders: nextDeductedSOs
     });
 
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        skus: nextSkus,
-        categories: state.categories,
-        divisions: nextDivisions,
-        transactions: nextTransactions,
-        deductedSalesOrders: nextDeductedSOs
-      }));
-    } catch (err) {
-      console.warn('Storage save error', err);
-    }
+    saveStorage({
+      skus: nextSkus,
+      categories: state.categories,
+      divisions: nextDivisions,
+      transactions: nextTransactions,
+      deductedSalesOrders: nextDeductedSOs,
+      warehouseLocations: state.warehouseLocations,
+      locationStockEntries: state.locationStockEntries,
+      countSession: state.countSession,
+      users: state.users,
+      currentUser: state.currentUser
+    });
 
     return {
       success: true,
@@ -825,10 +1207,13 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
           type: 'STOCK_IN',
           quantity: d.qtyDeducted,
           reason: `Reversal of PI #${piNumber} Dispatch Deduction`,
-          performed_by: 'Warehouse Admin',
+          performed_by: state.currentUser?.name || 'Warehouse Admin',
           timestamp: new Date().toISOString(),
           prev_stock: prevStock,
-          new_stock: newStock
+          new_stock: newStock,
+          referenceNo: `PI #${piNumber} (Reversal)`,
+          division: sku.division,
+          main_category: sku.main_category
         });
       }
     });
@@ -860,22 +1245,399 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
       deductedSalesOrders: nextDeductedSOs
     });
 
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        skus: nextSkus,
-        categories: state.categories,
-        divisions: nextDivisions,
-        transactions: nextTransactions,
-        deductedSalesOrders: nextDeductedSOs
-      }));
-    } catch (err) {
-      console.warn('Storage save error', err);
-    }
+    saveStorage({
+      skus: nextSkus,
+      categories: state.categories,
+      divisions: nextDivisions,
+      transactions: nextTransactions,
+      deductedSalesOrders: nextDeductedSOs,
+      warehouseLocations: state.warehouseLocations,
+      locationStockEntries: state.locationStockEntries,
+      countSession: state.countSession,
+      users: state.users,
+      currentUser: state.currentUser
+    });
 
     return {
       success: true,
       message: `Reversed stock deduction for PI #${piNumber}. Stock restored.`
     };
+  },
+
+  // ==========================================================================
+  // WAREHOUSE LOCATION & PHYSICAL COUNT OPERATIONS (PART 3, 4, 5)
+  // ==========================================================================
+
+  addWarehouseLocation: (loc) => {
+    const state = get();
+    const locsToAdd = Array.isArray(loc) ? loc : [loc];
+    const existingCodes = new Set(state.warehouseLocations.map(l => l.code));
+    const toInsert: WarehouseLocation[] = [];
+
+    locsToAdd.forEach(l => {
+      const norm = normalizeLocationCode(l.code);
+      if (norm && !existingCodes.has(norm)) {
+        existingCodes.add(norm);
+        toInsert.push({
+          ...l,
+          code: norm
+        });
+      }
+    });
+
+    if (toInsert.length === 0) return;
+
+    const nextLocations = [...state.warehouseLocations, ...toInsert];
+    set({ warehouseLocations: nextLocations });
+    saveStorage({ ...state, warehouseLocations: nextLocations });
+  },
+
+  saveLocationStockEntry: (entryData) => {
+    const state = get();
+    const normLoc = normalizeLocationCode(entryData.locationCode);
+    const existingIdx = state.locationStockEntries.findIndex(
+      e => e.skuId === entryData.skuId && e.locationCode === normLoc
+    );
+
+    let nextEntries = [...state.locationStockEntries];
+    if (existingIdx !== -1) {
+      nextEntries[existingIdx] = {
+        ...nextEntries[existingIdx],
+        countedQty: Math.round(entryData.countedQty),
+        notes: entryData.notes || nextEntries[existingIdx].notes,
+        countedAt: new Date().toISOString(),
+        countedBy: entryData.countedBy || state.currentUser?.name || 'Staff'
+      };
+    } else {
+      nextEntries.push({
+        id: `LOC-ENT-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        skuId: entryData.skuId,
+        skuCode: entryData.skuCode,
+        cleanName: entryData.cleanName,
+        division: entryData.division,
+        mainCategory: entryData.mainCategory,
+        locationCode: normLoc,
+        countedQty: Math.round(entryData.countedQty),
+        countedAt: new Date().toISOString(),
+        countedBy: entryData.countedBy || state.currentUser?.name || 'Staff',
+        notes: entryData.notes
+      });
+    }
+
+    // Auto-register location in warehouseLocations if not yet registered
+    let nextLocations = [...state.warehouseLocations];
+    if (!nextLocations.some(l => l.code === normLoc)) {
+      nextLocations.push({
+        code: normLoc,
+        type: normLoc.startsWith('BIN') ? 'BIN' : (normLoc.match(/^[A-G]/) ? 'RACK' : 'PALLET'),
+        zone: normLoc.startsWith('BIN') ? 'Storage Bins' : (normLoc.match(/^[A-G]/) ? `Rack ${normLoc.charAt(0)}` : `Line ${normLoc.charAt(0)}`),
+        description: `Custom Storage Location ${normLoc}`
+      });
+    }
+
+    set({ locationStockEntries: nextEntries, warehouseLocations: nextLocations });
+    saveStorage({ ...state, locationStockEntries: nextEntries, warehouseLocations: nextLocations });
+  },
+
+  batchSaveLocationStockEntries: (entries) => {
+    const state = get();
+    const map = new Map<string, LocationStockEntry>();
+
+    // Seed existing
+    state.locationStockEntries.forEach(e => {
+      map.set(`${e.skuId}__${e.locationCode}`, e);
+    });
+
+    const newLocations: WarehouseLocation[] = [];
+    const existingLocCodes = new Set(state.warehouseLocations.map(l => l.code));
+
+    entries.forEach(e => {
+      const normLoc = normalizeLocationCode(e.locationCode);
+      if (!normLoc) return;
+
+      const key = `${e.skuId}__${normLoc}`;
+      map.set(key, {
+        id: map.get(key)?.id || `LOC-ENT-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+        skuId: e.skuId,
+        skuCode: e.skuCode,
+        cleanName: e.cleanName,
+        division: e.division,
+        mainCategory: e.mainCategory,
+        locationCode: normLoc,
+        countedQty: Math.round(e.countedQty),
+        countedAt: new Date().toISOString(),
+        countedBy: e.countedBy || state.currentUser?.name || 'Excel Importer',
+        notes: e.notes
+      });
+
+      if (!existingLocCodes.has(normLoc)) {
+        existingLocCodes.add(normLoc);
+        newLocations.push({
+          code: normLoc,
+          type: normLoc.startsWith('BIN') ? 'BIN' : (normLoc.match(/^[A-G]/) ? 'RACK' : 'PALLET'),
+          zone: normLoc.startsWith('BIN') ? 'Storage Bins' : (normLoc.match(/^[A-G]/) ? `Rack ${normLoc.charAt(0)}` : `Line ${normLoc.charAt(0)}`),
+          description: `Location ${normLoc}`
+        });
+      }
+    });
+
+    const nextEntries = Array.from(map.values());
+    const nextLocations = [...state.warehouseLocations, ...newLocations];
+
+    set({
+      locationStockEntries: nextEntries,
+      warehouseLocations: nextLocations
+    });
+
+    saveStorage({
+      ...state,
+      locationStockEntries: nextEntries,
+      warehouseLocations: nextLocations
+    });
+  },
+
+  clearLocationStockEntries: () => {
+    const state = get();
+    set({ locationStockEntries: [] });
+    saveStorage({ ...state, locationStockEntries: [] });
+  },
+
+  setCountSession: (sessionPartial) => {
+    const state = get();
+    const nextSession = { ...state.countSession, ...sessionPartial };
+    set({ countSession: nextSession });
+    saveStorage({ ...state, countSession: nextSession });
+  },
+
+  applyOutwardReconciliation: (piNumber, items) => {
+    const state = get();
+    if (state.countSession.reconciledOrders.includes(piNumber)) {
+      return { success: false, message: `Sales Order PI #${piNumber} has already been deducted from location counts.` };
+    }
+
+    let nextEntries = [...state.locationStockEntries];
+    let deductedItemsCount = 0;
+
+    items.forEach(it => {
+      const normLoc = normalizeLocationCode(it.deductFromLocation);
+      const targetIdx = nextEntries.findIndex(
+        e => (e.skuCode === it.skuCode || e.cleanName.toLowerCase() === it.cleanName.toLowerCase()) && 
+             (!normLoc || e.locationCode === normLoc)
+      );
+
+      if (targetIdx !== -1) {
+        const cur = nextEntries[targetIdx];
+        const newQty = Math.max(0, cur.countedQty - Math.round(it.outwardQty));
+        nextEntries[targetIdx] = {
+          ...cur,
+          countedQty: newQty,
+          notes: `${cur.notes ? cur.notes + '; ' : ''}Reconciled -${it.outwardQty} from PI #${piNumber}`
+        };
+        deductedItemsCount++;
+      }
+    });
+
+    const nextSession = {
+      ...state.countSession,
+      reconciledOrders: [...state.countSession.reconciledOrders, piNumber]
+    };
+
+    set({
+      locationStockEntries: nextEntries,
+      countSession: nextSession
+    });
+
+    saveStorage({
+      ...state,
+      locationStockEntries: nextEntries,
+      countSession: nextSession
+    });
+
+    return {
+      success: true,
+      message: `Reconciled PI #${piNumber}: Deducted outward quantities for ${deductedItemsCount} items from location stock.`
+    };
+  },
+
+  // PART 5: Make Location Stock LIVE (Sync to Main Stock Master)
+  syncLocationStockToMaster: () => {
+    const state = get();
+    if (state.currentUser?.role !== 'admin') {
+      return {
+        success: false,
+        message: 'Permission Denied: Only Admin (Owner/Superuser) can make Location Stock live.',
+        updatedCount: 0,
+        totalLiveUnits: 0
+      };
+    }
+
+    // Aggregate by SKU ID
+    const skuLocationTotals = new Map<string, { totalQty: number; locs: string[] }>();
+    state.locationStockEntries.forEach(entry => {
+      if (!skuLocationTotals.has(entry.skuId)) {
+        skuLocationTotals.set(entry.skuId, { totalQty: 0, locs: [] });
+      }
+      const record = skuLocationTotals.get(entry.skuId)!;
+      record.totalQty += entry.countedQty;
+      if (entry.countedQty > 0) {
+        record.locs.push(`${entry.locationCode} (${entry.countedQty})`);
+      }
+    });
+
+    let updatedCount = 0;
+    let totalLiveUnits = 0;
+    const auditTxns: Transaction[] = [];
+
+    const nextSkus = state.skus.map(sku => {
+      const locData = skuLocationTotals.get(sku.id);
+      if (locData !== undefined) {
+        const prevStock = Math.round(sku.current_stock);
+        const liveQty = Math.round(locData.totalQty);
+        updatedCount++;
+        totalLiveUnits += liveQty;
+
+        const binString = locData.locs.length > 0 ? locData.locs.join(', ') : sku.location_bin;
+
+        auditTxns.push({
+          id: `TXN-LOC-SYNC-${Date.now().toString().slice(-4)}-${updatedCount}`,
+          sku_code: sku.sku_code,
+          sku_name: sku.clean_name,
+          type: 'LOCATION_RECONCILIATION',
+          quantity: liveQty,
+          reason: `Physical Warehouse Location Count Go-Live Sync (${binString})`,
+          performed_by: `${state.currentUser.name} (Admin Live Sync)`,
+          timestamp: new Date().toISOString(),
+          prev_stock: prevStock,
+          new_stock: liveQty,
+          location: binString,
+          division: sku.division,
+          main_category: sku.main_category
+        });
+
+        return {
+          ...sku,
+          current_stock: liveQty,
+          quantity: liveQty,
+          status: (liveQty === 0 ? 'Zero Stock' : (liveQty < 0 ? 'Negative' : 'In Stock')) as 'In Stock' | 'Zero Stock' | 'Negative',
+          location_bin: binString,
+          last_audit_date: new Date().toLocaleDateString('en-GB'),
+          last_write_off_date: new Date().toLocaleDateString('en-GB'),
+          write_off_source_header: 'Physical Location Audit Sync',
+          last_modified: new Date().toISOString()
+        };
+      }
+      return sku;
+    });
+
+    const nextStats = computeStats(nextSkus);
+
+    // Update division stock totals
+    const nextDivisions = { ...state.divisions };
+    (['DIM', 'DIN', 'DTR'] as DivisionCode[]).forEach(d => {
+      if (nextDivisions[d]) {
+        const dStock = nextSkus.filter(s => s.division === d).reduce((a, s) => a + Math.round(s.current_stock), 0);
+        nextDivisions[d] = {
+          ...nextDivisions[d],
+          total_stock: dStock
+        };
+      }
+    });
+
+    const nextTransactions = [...auditTxns, ...state.transactions];
+
+    state.searchEngine.updateData(nextSkus);
+
+    set({
+      skus: nextSkus,
+      divisions: nextDivisions,
+      transactions: nextTransactions,
+      stats: nextStats
+    });
+
+    saveStorage({
+      skus: nextSkus,
+      categories: state.categories,
+      divisions: nextDivisions,
+      transactions: nextTransactions,
+      deductedSalesOrders: state.deductedSalesOrders,
+      warehouseLocations: state.warehouseLocations,
+      locationStockEntries: state.locationStockEntries,
+      countSession: state.countSession,
+      users: state.users,
+      currentUser: state.currentUser
+    });
+
+    return {
+      success: true,
+      message: `Warehouse Location Stock is now LIVE! Updated ${updatedCount} SKUs. Main catalog physical balance synchronized to ${nextStats.total_stock.toLocaleString()} Units.`,
+      updatedCount,
+      totalLiveUnits
+    };
+  },
+
+  restoreFullDatabase: (backupData: any) => {
+    try {
+      const data = backupData.data || backupData;
+      if (!data.skus || !Array.isArray(data.skus)) {
+        return { success: false, message: 'Invalid backup JSON file: Missing "skus" array.' };
+      }
+
+      const skus = data.skus as SkuItem[];
+      const categories = (data.categories || initialSeedData.categories_hierarchy) as CategoryGroup[];
+      const divisions = (data.divisions || initialSeedData.divisions) as Record<DivisionCode, DivisionInfo>;
+      const transactions = (data.transactions || []) as Transaction[];
+      const deductedSalesOrders = (data.deductedSalesOrders || {}) as Record<string, DeductedSOInfo>;
+      const warehouseLocations = (data.warehouseLocations || generateInitialWarehouseLocations()) as WarehouseLocation[];
+      const locationStockEntries = (data.locationStockEntries || []) as LocationStockEntry[];
+      const countSession = (data.countSession || {
+        startDate: new Date().toISOString().slice(0, 10),
+        endDate: new Date().toISOString().slice(0, 10),
+        isActive: false,
+        reconciledOrders: []
+      }) as CountSession;
+      const users = (data.users && data.users.length > 0) ? data.users as AppUser[] : defaultUsers;
+      const currentUser = users[0];
+
+      const engine = new InventorySearchEngine(skus);
+      const stats = computeStats(skus);
+
+      set({
+        skus,
+        categories,
+        divisions,
+        transactions,
+        stats,
+        deductedSalesOrders,
+        warehouseLocations,
+        locationStockEntries,
+        countSession,
+        users,
+        currentUser,
+        searchEngine: engine
+      });
+
+      saveStorage({
+        skus,
+        categories,
+        divisions,
+        transactions,
+        deductedSalesOrders,
+        warehouseLocations,
+        locationStockEntries,
+        countSession,
+        users,
+        currentUser
+      });
+
+      return {
+        success: true,
+        message: `Database successfully restored! Loaded ${skus.length.toLocaleString()} SKUs, ${warehouseLocations.length} locations, and ${transactions.length} transactions.`
+      };
+    } catch (err) {
+      return {
+        success: false,
+        message: `Restore failed: ${(err as Error).message}`
+      };
+    }
   }
 }));
-

@@ -54,7 +54,7 @@ export interface SkuItem {
   last_modified: string;
 }
 
-export type TransactionType = 'STOCK_IN' | 'STOCK_OUT' | 'AUDIT_ADJUSTMENT' | 'WRITE_OFF_SYNC';
+export type TransactionType = 'STOCK_IN' | 'STOCK_OUT' | 'AUDIT_ADJUSTMENT' | 'WRITE_OFF_SYNC' | 'LOCATION_RECONCILIATION';
 
 export interface Transaction {
   id: string;
@@ -67,6 +67,11 @@ export interface Transaction {
   timestamp: string;
   prev_stock: number;
   new_stock: number;
+  notes?: string;
+  location?: string;
+  referenceNo?: string;
+  division?: DivisionCode;
+  main_category?: string;
 }
 
 export interface InventoryStats {
@@ -92,6 +97,7 @@ export interface InventoryData {
 export type ActiveNavModule = 
   | 'stock-master' 
   | 'sales-dispatch'
+  | 'location-stock'
   | 'stock-entry' 
   | 'write-off-audit' 
   | 'stock-alerts' 
@@ -169,5 +175,65 @@ export interface PackingListSummary {
   totalBoxes: number;
   totalGrossWeight: number; // 2 decimals
   totalUnits: number; // Whole integer
+}
+
+// ============================================================================
+// WAREHOUSE LOCATION & PHYSICAL COUNT MODULE TYPES
+// ============================================================================
+
+export type LocationType = 'RACK' | 'PALLET' | 'BIN';
+
+export interface WarehouseLocation {
+  code: string; // e.g. "A1", "H2", "BIN-5"
+  type: LocationType;
+  zone: string; // e.g. "Rack A", "Line H", "Bins"
+  shelfOrIndex?: number;
+  description?: string;
+}
+
+export interface LocationStockEntry {
+  id: string;
+  skuId: string;
+  skuCode: string;
+  cleanName: string;
+  division: DivisionCode;
+  mainCategory: string;
+  locationCode: string; // e.g. "A1", "H2", "BIN-1"
+  countedQty: number;
+  countedAt: string;
+  countedBy: string;
+  notes?: string;
+}
+
+export interface CountSession {
+  startDate: string; // YYYY-MM-DD
+  endDate: string; // YYYY-MM-DD
+  isActive: boolean;
+  reconciledOrders: string[]; // List of PI numbers
+}
+
+// ============================================================================
+// USER ROLES & PERMISSIONS
+// ============================================================================
+
+export type UserRole = 'admin' | 'dispatch_manager' | 'inward_storekeeper' | 'count_staff';
+
+export interface UserPermissions {
+  canEditStockMaster: boolean;
+  canDispatchSO: boolean;
+  canInwardStock: boolean;
+  canCountLocations: boolean;
+  canGoLiveLocations: boolean;
+  canManageUsers: boolean;
+  canResetData: boolean;
+}
+
+export interface AppUser {
+  id: string;
+  name: string;
+  role: UserRole;
+  pin: string;
+  avatarColor: string;
+  permissions: UserPermissions;
 }
 

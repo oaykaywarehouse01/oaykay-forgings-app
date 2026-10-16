@@ -8,7 +8,9 @@ import {
   CheckCircle2,
   TrendingDown,
   Layers,
-  Truck
+  Truck,
+  MapPin,
+  ShieldCheck
 } from 'lucide-react';
 import { useInventoryStore } from '../store/useInventoryStore';
 import { ActiveNavModule, DivisionCode } from '../types/inventory';
@@ -23,7 +25,10 @@ export const Sidebar: React.FC = () => {
     divisions, 
     drillDown, 
     setDrillDown,
-    navigateToLevel
+    navigateToLevel,
+    locationStockEntries,
+    currentUser,
+    setUserManagementModalOpen
   } = useInventoryStore();
 
   const navItems: Array<{
@@ -46,6 +51,13 @@ export const Sidebar: React.FC = () => {
       icon: Truck,
       badge: 'SO ➔ Labels',
       badgeColor: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 font-bold',
+    },
+    {
+      id: 'location-stock',
+      label: 'Location Stock (Racks/Bins)',
+      icon: MapPin,
+      badge: locationStockEntries.length > 0 ? `${locationStockEntries.length} logged` : 'A1-G3/Bins',
+      badgeColor: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300 font-bold',
     },
     {
       id: 'stock-entry',
@@ -228,17 +240,43 @@ export const Sidebar: React.FC = () => {
         </div>
       </div>
 
-      {/* Footer System Status */}
-      <div className="border-t border-slate-200 px-4 py-3 dark:border-slate-800 text-[11px] text-slate-500 dark:text-slate-400">
-        <div className="flex items-center justify-between">
+      {/* Footer System Status & Active User */}
+      <div className="border-t border-slate-200 p-3 dark:border-slate-800 space-y-2">
+        {/* Active User Switcher Pill */}
+        <button
+          onClick={() => setUserManagementModalOpen(true)}
+          className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 p-2 text-left hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-800/80 dark:hover:bg-slate-800 transition"
+          title="Click to Switch User / Role via PIN"
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <div className={`h-7 w-7 rounded-lg flex items-center justify-center text-white font-black text-xs shrink-0 shadow-xs ${currentUser?.avatarColor || 'bg-slate-700'}`}>
+              {currentUser?.name ? currentUser.name.charAt(0).toUpperCase() : 'A'}
+            </div>
+            <div className="flex flex-col min-w-0">
+              <span className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                {currentUser?.name || 'Administrator'}
+              </span>
+              <span className="text-[10px] text-slate-400 capitalize truncate">
+                {currentUser?.role === 'admin' ? 'Super Admin' : currentUser?.role?.replace('_', ' ')}
+              </span>
+            </div>
+          </div>
+          <span className="text-[10px] font-bold text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded border border-orange-200 dark:bg-orange-950 dark:border-orange-900 shrink-0">
+            PIN
+          </span>
+        </button>
+
+        <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 px-1">
           <div className="flex items-center gap-1.5">
             <span className="h-2 w-2 rounded-full bg-emerald-500 animate-subtle-pulse" />
-            <span className="font-medium text-slate-700 dark:text-slate-300">Catalog Engine</span>
+            <span className="font-semibold text-slate-700 dark:text-slate-300">Catalog Engine</span>
           </div>
-          <span className="font-mono text-[10px] font-semibold text-slate-500">v2.0 QTY</span>
+          <span className="font-mono text-[10px] font-bold text-orange-600 dark:text-orange-400 bg-orange-50 dark:bg-orange-950 px-1.5 py-0.2 rounded border border-orange-200 dark:border-orange-900">
+            v3.0 QTY
+          </span>
         </div>
-        <p className="mt-0.5 text-[10px] text-slate-400 font-mono">
-          {stats.total_skus.toLocaleString()} SKUs • {stats.total_stock.toLocaleString()} Units
+        <p className="px-1 text-[10px] text-slate-400 font-mono">
+          {stats.total_skus.toLocaleString()} SKUs • {Math.round(stats.total_stock).toLocaleString()} Units
         </p>
       </div>
     </aside>

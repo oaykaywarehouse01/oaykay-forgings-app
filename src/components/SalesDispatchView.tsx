@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { 
   FileSpreadsheet, 
   Upload, 
@@ -97,6 +97,12 @@ export const SalesDispatchView: React.FC = () => {
   const [outputTab, setOutputTab] = useState<'packing-list' | 'box-labels'>('packing-list');
   const [labelViewMode, setLabelViewMode] = useState<'all-grid' | 'single-carousel'>('all-grid');
   const [currentCartonIndex, setCurrentCartonIndex] = useState<number>(0);
+
+  // Quick Box Builder state (Step 3)
+  const [builderItemSlNo, setBuilderItemSlNo] = useState<number | ''>('');
+  const [builderStartBox, setBuilderStartBox] = useState<string>('');
+  const [builderUnitsPerBox, setBuilderUnitsPerBox] = useState<string>('200');
+  const [builderGrossWeight, setBuilderGrossWeight] = useState<string>('19.00');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -221,6 +227,18 @@ export const SalesDispatchView: React.FC = () => {
     setCustomCartons(null); // Invalidate custom cartons to refresh with new quantities
   };
 
+  const handleUpdateDispatchQtyRaw = (slNo: number, qty: any) => {
+    if (!soData) return;
+    const nextItems = soData.items.map(it => {
+      if (it.slNo !== slNo) return it;
+      return {
+        ...it,
+        dispatchQty: qty
+      };
+    });
+    setSoData({ ...soData, items: nextItems });
+  };
+
   const handleShipAvailable = (item: SalesOrderItem) => {
     if (!item.matchedSku) return;
     const available = Math.max(0, Math.round(item.matchedSku.current_stock));
@@ -269,7 +287,7 @@ export const SalesDispatchView: React.FC = () => {
               ...it.matchedSku,
               current_stock: newStock,
               quantity: newStock,
-              status: newStock === 0 ? 'Zero Stock' : (newStock < 0 ? 'Negative' : 'In Stock')
+              status: (newStock === 0 ? 'Zero Stock' : (newStock < 0 ? 'Negative' : 'In Stock')) as 'In Stock' | 'Zero Stock' | 'Negative'
             }
           };
         }
@@ -438,6 +456,100 @@ export const SalesDispatchView: React.FC = () => {
     setSoData({ ...soData, items: nextItems });
     setCustomCartons(null);
     setSuccessMessage('All promotional items grouped into the Final / Last Carton at the bottom of the packing list.');
+  };
+
+  // Initialize Quick Box Builder with first non-promo item
+  useEffect(() => {
+    if (soData && soData.items.length > 0 && builderItemSlNo === '') {
+      const firstNonPromo = soData.items.find(i => !i.isPromoOrNonStock) || soData.items[0];
+      if (firstNonPromo) {
+        setBuilderItemSlNo(firstNonPromo.slNo);
+        const qty = typeof firstNonPromo.dispatchQty === 'number' ? firstNonPromo.dispatchQty : firstNonPromo.orderedQty;
+        setBuilderUnitsPerBox(String(firstNonPromo.unitsPerBox || qty || 200));
+        setBuilderGrossWeight(String(firstNonPromo.grossWeightPerBox || 19.00));
+        setBuilderStartBox(firstNonPromo.assignedBoxNo ? String(firstNonPromo.assignedBoxNo) : '');
+      }
+    }
+  }, [soData, builderItemSlNo]);
+
+  const handleSelectBuilderItem = (slNo: number) => {
+    setBuilderItemSlNo(slNo);
+    const it = soData?.items.find(i => i.slNo === slNo);
+    if (it) {
+      const qty = typeof it.dispatchQty === 'number' ? it.dispatchQty : it.orderedQty;
+      setBuilderUnitsPerBox(String(it.unitsPerBox || qty || 200));
+      setBuilderGrossWeight(String(it.grossWeightPerBox || 19.00));
+      setBuilderStartBox(it.assignedBoxNo ? String(it.assignedBoxNo) : '');
+    }
+  };
+
+  const builderPreview = useMemo(() => {
+    if (!soData || builderItemSlNo === '') return null;
+    const item = soData.items.find(i => i.slNo === builderItemSlNo);
+    if (!item) return null;
+
+    const totalQty = typeof item.dispatchQty === 'number' ? Math.round(item.dispatchQty) : Math.round(item.orderedQty);
+    const unitsPerBox = Math.max(1, parseInt(builderUnitsPerBox, 10) || totalQty);
+    const grossWeight = parseFloat(builderGrossWeight) || 19.00;
+    const startBoxNum = builderStartBox.trim() === '' ? null : Math.max(1, parseInt(builderStartBox, 10) || 1);
+
+    const totalBoxes = Math.ceil(totalQty / unitsPerBox);
+    const remainderQty = totalQty % unitsPerBox;
+    const fullBoxes = Math.floor(totalQty / unitsPerBox);
+
+    const boxesList: Array<{
+      boxNoLabel: string;
+      qty: number;
+      weight: number;
+      isRemainder: boolean;
+    }> = [];
+
+    for (let b = 0; b < totalBoxes; b++) {
+      const isRemainder = remainderQty > 0 && b === totalBoxes - 1;
+      const boxQty = isRemainder ? remainderQty : unitsPerBox;
+      const boxWeight = isRemainder 
+        ? Number(((boxQty / unitsPerBox) * grossWeight).toFixed(2))
+        : Number(grossWeight.toFixed(2));
+
+      const boxNoDisplay = startBoxNum !== null ? `#${startBoxNum + b}` : `Auto (#${b + 1})`;
+      boxesList.push({
+        boxNoLabel: boxNoDisplay,
+        qty: boxQty,
+        weight: boxWeight,
+        isRemainder
+      });
+    }
+
+    return {
+      item,
+      totalQty,
+      unitsPerBox,
+      grossWeight,
+      totalBoxes,
+      fullBoxes,
+      remainderQty,
+      startBoxNum,
+      boxesList
+    };
+  }, [soData, builderItemSlNo, builderUnitsPerBox, builderGrossWeight, builderStartBox]);
+
+  const handleApplyQuickBoxBuilder = () => {
+    if (!soData || !builderPreview) return;
+    const item = builderPreview.item;
+
+    const nextItems = soData.items.map(it => {
+      if (it.slNo !== item.slNo) return it;
+      return {
+        ...it,
+        unitsPerBox: builderPreview.unitsPerBox,
+        grossWeightPerBox: builderPreview.grossWeight,
+        assignedBoxNo: builderPreview.startBoxNum
+      };
+    });
+
+    setSoData({ ...soData, items: nextItems });
+    setCustomCartons(null);
+    setSuccessMessage(`Applied Box Setup for "${item.cleanItemName}": ${builderPreview.totalBoxes} Boxes (${builderPreview.unitsPerBox} Pcs/Box @ ${builderPreview.grossWeight} Kg) starting at Box ${builderPreview.startBoxNum !== null ? '#' + builderPreview.startBoxNum : 'Auto'}`);
   };
 
   // =========================================================================
@@ -712,6 +824,10 @@ export const SalesDispatchView: React.FC = () => {
     <div className="space-y-6 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto animate-in fade-in duration-200">
       {/* Print-specific style overrides */}
       <style>{`
+        @page {
+          size: A4 portrait;
+          margin: 8mm;
+        }
         @media print {
           body * {
             visibility: hidden;
@@ -726,13 +842,21 @@ export const SalesDispatchView: React.FC = () => {
             width: 100%;
             background: white !important;
             color: black !important;
+            padding: 0 !important;
+            margin: 0 !important;
           }
           .no-print {
             display: none !important;
           }
+          .print-grid-2cols {
+            display: grid !important;
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+            gap: 12px !important;
+          }
           .print-page-break {
-            break-inside: avoid;
-            page-break-inside: avoid;
+            break-inside: avoid !important;
+            page-break-inside: avoid !important;
+            page-break-after: auto !important;
           }
           input {
             border: none !important;
@@ -1300,8 +1424,24 @@ export const SalesDispatchView: React.FC = () => {
                                   min={0}
                                   max={orderedQty}
                                   step={1}
-                                  value={dispatchQty}
-                                  onChange={(e) => handleUpdateDispatchQty(item.slNo, Number(e.target.value))}
+                                  value={item.dispatchQty !== undefined ? item.dispatchQty : orderedQty}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    if (val === '') {
+                                      handleUpdateDispatchQtyRaw(item.slNo, '');
+                                    } else {
+                                      const parsed = parseInt(val, 10);
+                                      handleUpdateDispatchQtyRaw(item.slNo, isNaN(parsed) ? '' : parsed);
+                                    }
+                                  }}
+                                  onBlur={() => {
+                                    const rawVal: any = item.dispatchQty;
+                                    if (rawVal === '' || rawVal === undefined || isNaN(Number(rawVal))) {
+                                      handleUpdateDispatchQty(item.slNo, orderedQty);
+                                    } else {
+                                      handleUpdateDispatchQty(item.slNo, Number(rawVal));
+                                    }
+                                  }}
                                   className={`w-20 rounded-lg border px-2 py-1 text-center font-mono font-bold text-xs focus:outline-hidden dark:bg-slate-800 ${
                                     isPartial
                                       ? 'border-amber-400 bg-amber-50/70 text-amber-900 dark:text-amber-200'
@@ -1426,6 +1566,132 @@ export const SalesDispatchView: React.FC = () => {
                     <ArrowRight className="h-4 w-4" />
                   </button>
                 </div>
+              </div>
+
+              {/* INTERACTIVE QUICK BOX BUILDER CARD (TOP OF STEP 3) */}
+              <div className="rounded-2xl border-2 border-orange-300 bg-gradient-to-br from-orange-50/70 via-white to-amber-50/50 p-5 shadow-xs dark:border-orange-800 dark:from-slate-900 dark:to-orange-950/20">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-orange-200 dark:border-orange-900/60 gap-2">
+                  <div className="flex items-center gap-2">
+                    <Boxes className="h-5 w-5 text-orange-600" />
+                    <div>
+                      <h3 className="text-sm font-black text-slate-900 dark:text-white">
+                        Interactive Manual Box Builder ("Konsi Item Konse Box Mein + 1 Box Mein Kitni Qty")
+                      </h3>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                        Select an item, define 1-box quantity and gross weight. System automatically calculates boxes and handles remainders.
+                      </p>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-mono font-bold text-orange-700 bg-orange-100 px-2 py-0.5 rounded-md dark:bg-orange-950 dark:text-orange-300 self-start sm:self-auto">
+                    Direct Typing Enabled ⌨️
+                  </span>
+                </div>
+
+                {/* 4 Input Fields */}
+                <div className="mt-4 grid grid-cols-1 sm:grid-cols-4 gap-3">
+                  {/* Dropdown 1: Select Order Item */}
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                      1. Select Order Item:
+                    </label>
+                    <select
+                      value={builderItemSlNo}
+                      onChange={(e) => handleSelectBuilderItem(parseInt(e.target.value, 10))}
+                      className="w-full rounded-xl border border-slate-300 bg-white px-2.5 py-2 text-xs font-bold text-slate-900 dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                    >
+                      {soData.items.map(it => {
+                        const qty = typeof it.dispatchQty === 'number' ? it.dispatchQty : it.orderedQty;
+                        return (
+                          <option key={it.slNo} value={it.slNo}>
+                            {it.cleanItemName} ({qty} Pcs) {it.isPromoOrNonStock ? '[Promo]' : ''}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+
+                  {/* Input 2: Starting Box No. */}
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                      2. Starting Box # (or Auto):
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Auto (Next available)"
+                      value={builderStartBox}
+                      onChange={(e) => setBuilderStartBox(e.target.value)}
+                      className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-mono font-bold text-slate-900 dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                    />
+                  </div>
+
+                  {/* Input 3: Units Per Box */}
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                      3. 1 Box Mein Kitni Qty?
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      placeholder="e.g. 200"
+                      value={builderUnitsPerBox}
+                      onChange={(e) => setBuilderUnitsPerBox(e.target.value)}
+                      className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-mono font-bold text-slate-900 dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                    />
+                  </div>
+
+                  {/* Input 4: Gross Weight (Kg) */}
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                      4. 1 Box Ka Gross Wt (Kg):
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0.1"
+                      placeholder="e.g. 19.00"
+                      value={builderGrossWeight}
+                      onChange={(e) => setBuilderGrossWeight(e.target.value)}
+                      className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-mono font-bold text-slate-900 dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                    />
+                  </div>
+                </div>
+
+                {/* Live Calculation Preview & Apply Button */}
+                {builderPreview && (
+                  <div className="mt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-xl border border-orange-200 bg-white dark:border-orange-900 dark:bg-slate-900/80">
+                    <div>
+                      <div className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-2">
+                        <span>Live Calculation Preview:</span>
+                        <span className="font-mono text-orange-600 dark:text-orange-400">
+                          {builderPreview.totalQty} Pcs ÷ {builderPreview.unitsPerBox} Per Box = {builderPreview.totalBoxes} {builderPreview.totalBoxes === 1 ? 'Box' : 'Boxes'}
+                        </span>
+                      </div>
+
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {builderPreview.boxesList.map((bx, idx) => (
+                          <span
+                            key={idx}
+                            className={`text-[11px] font-mono px-2 py-0.5 rounded-md border ${
+                              bx.isRemainder
+                                ? 'border-amber-300 bg-amber-50 text-amber-900 dark:bg-amber-950 dark:text-amber-200'
+                                : 'border-slate-200 bg-slate-50 text-slate-800 dark:bg-slate-800 dark:text-slate-200'
+                            }`}
+                          >
+                            Box {bx.boxNoLabel}: <strong>{bx.qty} Pcs</strong> • {bx.weight} Kg {bx.isRemainder ? '(Remainder)' : ''}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={handleApplyQuickBoxBuilder}
+                      className="flex items-center gap-1.5 rounded-xl bg-orange-600 px-4 py-2.5 text-xs font-black text-white hover:bg-orange-700 active:scale-95 shadow-xs transition shrink-0"
+                    >
+                      <CheckCircle2 className="h-4 w-4" />
+                      <span>Apply to Boxes</span>
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* NON-STOCK & PROMOTIONAL ITEMS CARD: ALWAYS PACKED IN LAST BOX */}
@@ -1575,8 +1841,13 @@ export const SalesDispatchView: React.FC = () => {
                                   type="number"
                                   min={1}
                                   step={1}
-                                  value={unitsPerBox}
-                                  onChange={(e) => handleUpdateItemPacking(item.slNo, 'unitsPerBox', Math.max(1, Math.round(Number(e.target.value))))}
+                                  value={item.unitsPerBox !== undefined ? item.unitsPerBox : ''}
+                                  onChange={(e) => handleUpdateItemPacking(item.slNo, 'unitsPerBox', e.target.value === '' ? '' : parseInt(e.target.value, 10))}
+                                  onBlur={() => {
+                                    if (!item.unitsPerBox || isNaN(Number(item.unitsPerBox))) {
+                                      handleUpdateItemPacking(item.slNo, 'unitsPerBox', Math.max(1, Math.round(item.dispatchQty || item.orderedQty || 1)));
+                                    }
+                                  }}
                                   className="w-20 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-center font-mono font-bold text-slate-900 focus:outline-hidden dark:bg-slate-800 dark:border-slate-700 dark:text-white"
                                 />
                                 <span className="text-xs text-slate-400 font-mono">Pcs</span>
@@ -1591,8 +1862,13 @@ export const SalesDispatchView: React.FC = () => {
                                 type="number"
                                 min={0.1}
                                 step={0.01}
-                                value={item.grossWeightPerBox}
-                                onChange={(e) => handleUpdateItemPacking(item.slNo, 'grossWeightPerBox', Number(Number(e.target.value).toFixed(2)))}
+                                value={item.grossWeightPerBox !== undefined ? item.grossWeightPerBox : ''}
+                                onChange={(e) => handleUpdateItemPacking(item.slNo, 'grossWeightPerBox', e.target.value)}
+                                onBlur={() => {
+                                  const num = parseFloat(String(item.grossWeightPerBox));
+                                  const cleanNum = isNaN(num) || num <= 0 ? 15.00 : Number(num.toFixed(2));
+                                  handleUpdateItemPacking(item.slNo, 'grossWeightPerBox', cleanNum);
+                                }}
                                 className="w-24 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-center font-mono font-bold text-slate-900 focus:outline-hidden dark:bg-slate-800 dark:border-slate-700 dark:text-white"
                               />
                               <span className="text-xs text-slate-400 font-mono">Kg</span>
@@ -1976,7 +2252,7 @@ export const SalesDispatchView: React.FC = () => {
                   )}
 
                   {/* Sticker Grid / Single View */}
-                  <div className={labelViewMode === 'all-grid' ? 'grid grid-cols-1 md:grid-cols-2 gap-6' : 'max-w-xl mx-auto'}>
+                  <div className={labelViewMode === 'all-grid' ? 'grid grid-cols-1 md:grid-cols-2 gap-6 print-grid-2cols' : 'max-w-xl mx-auto'}>
                     {(labelViewMode === 'all-grid' ? activeSummary.cartons : [activeSummary.cartons[currentCartonIndex]]).map((carton, cartonIdx) => {
                       if (!carton) return null;
                       const realCartonIdx = labelViewMode === 'all-grid' ? cartonIdx : currentCartonIndex;
