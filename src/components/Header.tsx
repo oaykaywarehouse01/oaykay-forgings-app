@@ -14,7 +14,9 @@ import {
   Plus,
   MapPin,
   Cloud,
-  UserCheck
+  UserCheck,
+  LogOut,
+  User
 } from 'lucide-react';
 import { useInventoryStore } from '../store/useInventoryStore';
 import { DivisionCode } from '../types/inventory';
@@ -36,6 +38,7 @@ export const Header: React.FC = () => {
     isDarkMode,
     toggleDarkMode,
     currentUser,
+    logout,
     setAddNewSkuModalOpen,
     setUserManagementModalOpen,
     setCloudSyncModalOpen
@@ -212,19 +215,29 @@ export const Header: React.FC = () => {
         <button
           onClick={() => setUserManagementModalOpen(true)}
           className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 p-1 lg:px-2 lg:py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 transition shrink-0"
-          title={`Active User: ${currentUser?.name || 'Admin'} (${currentUser?.role}) — Click to Switch User / Enter PIN`}
+          title={`Active User: ${currentUser?.name || 'Admin'} (${currentUser?.role}) — Click to Manage Staff Users`}
         >
           <div className={`h-6 w-6 rounded-full flex items-center justify-center text-white font-black text-[11px] shadow-xs ${currentUser?.avatarColor || 'bg-slate-700'}`}>
             {currentUser?.name ? currentUser.name.charAt(0).toUpperCase() : 'A'}
           </div>
           <div className="hidden lg:flex flex-col text-left leading-tight">
-            <span className="font-bold text-[11px] text-slate-900 dark:text-white truncate max-w-[85px]">
-              {currentUser?.name?.split(' ')[0] || 'User'}
+            <span className="font-bold text-[11px] text-slate-900 dark:text-white truncate max-w-[95px]">
+              {currentUser?.name || 'User'}
             </span>
             <span className="text-[9px] text-slate-400 uppercase font-semibold">
               {currentUser?.role === 'admin' ? 'Admin' : currentUser?.role?.replace('_', ' ')}
             </span>
           </div>
+        </button>
+
+        {/* 1-Click Red Logout Button */}
+        <button
+          onClick={logout}
+          className="flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-100 hover:border-rose-300 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300 dark:hover:bg-rose-900/50 transition shrink-0 shadow-2xs"
+          title="Sign Out / Lock Workstation"
+        >
+          <LogOut className="h-3.5 w-3.5 text-rose-600 dark:text-rose-400" />
+          <span className="hidden sm:inline font-black">Logout</span>
         </button>
 
         {/* Keyboard Shortcuts Trigger */}

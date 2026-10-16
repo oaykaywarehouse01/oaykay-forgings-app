@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { 
   Boxes, 
   MapPin, 
@@ -19,7 +19,9 @@ import {
   Sparkles,
   RefreshCw,
   Sliders,
-  Filter
+  Filter,
+  Check,
+  X
 } from 'lucide-react';
 import { useInventoryStore } from '../store/useInventoryStore';
 import { WarehouseLocation, LocationStockEntry, DivisionCode, SkuItem } from '../types/inventory';
@@ -45,6 +47,7 @@ export const LocationStockView: React.FC = () => {
     countSession, 
     currentUser,
     deductedSalesOrders,
+    searchEngine,
     addWarehouseLocation, 
     updateWarehouseLocation,
     deleteWarehouseLocation,
@@ -72,10 +75,17 @@ export const LocationStockView: React.FC = () => {
   const [editLocCode, setEditLocCode] = useState('');
   const [editLocDesc, setEditLocDesc] = useState('');
 
+  // Autocomplete Search Combobox state for rapid entry
   const [selectedSkuForCount, setSelectedSkuForCount] = useState<SkuItem | null>(null);
   const [skuSearchQuery, setSkuSearchQuery] = useState('');
+  const [selectedDivFilter, setSelectedDivFilter] = useState<DivisionCode | 'ALL'>('ALL');
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
   const [countedQtyInput, setCountedQtyInput] = useState<string>('');
   const [countNotes, setCountNotes] = useState<string>('');
+
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const qtyInputRef = useRef<HTMLInputElement>(null);
 
   // Add Location Modal state
   const [isAddLocationModalOpen, setIsAddLocationModalOpen] = useState(false);
@@ -144,16 +154,61 @@ export const LocationStockView: React.FC = () => {
     return new Set(locationStockEntries.map(e => e.skuId)).size;
   }, [locationStockEntries]);
 
-  // Filter SKUs for counting drawer
-  const searchSkuResults = useMemo(() => {
-    if (!skuSearchQuery.trim()) return skus.slice(0, 15);
-    const q = skuSearchQuery.toLowerCase();
-    return skus.filter(s => 
-      s.clean_name.toLowerCase().includes(q) || 
-      s.sku_code.toLowerCase().includes(q) ||
-      s.main_category.toLowerCase().includes(q)
-    ).slice(0, 15);
-  }, [skus, skuSearchQuery]);
+  // Autocomplete Suggestions: searchEngine + multi-token fallback + instant top 30 on empty query
+  const suggestions = useMemo(() => {
+    const query = skuSearchQuery.trim();
+    const divFilter = selectedDivFilter !== 'ALL' ? selectedDivFilter : undefined;
+
+    // When searchQuery is empty and user clicks/focuses the search box, immediately show top 30 items
+    if (!query) {
+      let pool = skus;
+      if (divFilter) {
+        pool = pool.filter(s => s.division === divFilter);
+      }
+      return pool.slice(0, 30);
+    }
+
+    // 1. Query searchEngine.search(searchQuery, { division: selectedDivFilter, limit: 40 })
+    const searchResults = searchEngine.search(query, { division: divFilter, limit: 40 }).map(r => r.item);
+    if (searchResults.length > 0) {
+      return searchResults;
+    }
+
+    // 2. Multi-token fallback matching Part Name, Size/Dimension (19mm, 4", 8x10), SKU code, and shorthands
+    const qLower = query.toLowerCase();
+    const tokens = qLower.split(/[\s,\-_/]+/).filter(Boolean);
+    return skus.filter(item => {
+      if (divFilter && item.division !== divFilter) return false;
+      const itemText = `${item.clean_name} ${item.sku_code} ${item.size_spec || ''} ${item.main_category} ${item.sub_category || ''}`.toLowerCase();
+      return tokens.every(tok => itemText.includes(tok));
+    }).slice(0, 40);
+  }, [skuSearchQuery, selectedDivFilter, skus, searchEngine]);
+
+  // Handle instant SKU selection from combobox dropdown
+  const handleSelectSkuForLocation = (sku: SkuItem) => {
+    setSelectedSkuForCount(sku);
+    setSkuSearchQuery(sku.clean_name);
+    setIsDropdownOpen(false);
+    setHighlightedIndex(0);
+
+    // If item is already recorded in current location, pre-populate that quantity
+    const existingInLoc = locationStockEntries.find(
+      e => e.locationCode === selectedLocation?.code && e.skuId === sku.id
+    );
+    if (existingInLoc) {
+      setCountedQtyInput(String(existingInLoc.countedQty));
+      setCountNotes(existingInLoc.notes || '');
+    } else {
+      setCountedQtyInput('');
+      setCountNotes('');
+    }
+
+    // Auto-focus quantity input immediately
+    setTimeout(() => {
+      qtyInputRef.current?.focus();
+      qtyInputRef.current?.select();
+    }, 40);
+  };
 
   // Active items counted inside the currently selected location
   const itemsInSelectedLocation = useMemo(() => {
@@ -161,7 +216,7 @@ export const LocationStockView: React.FC = () => {
     return locationStockEntries.filter(e => e.locationCode === selectedLocation.code);
   }, [selectedLocation, locationStockEntries]);
 
-  // Handlers for physical count save
+  // Handlers for physical count save with rapid auto-focus back to search input
   const handleSaveCountEntry = () => {
     if (!selectedLocation || !selectedSkuForCount) {
       showStatus('error', 'Please select a location and an SKU to record physical count.');
@@ -181,13 +236,23 @@ export const LocationStockView: React.FC = () => {
       mainCategory: selectedSkuForCount.main_category,
       locationCode: selectedLocation.code,
       countedQty: qty,
-      countedBy: currentUser.name,
+      countedBy: currentUser?.name || 'Staff',
       notes: countNotes
     });
 
     showStatus('success', `Saved ${qty.toLocaleString()} Pcs of "${selectedSkuForCount.clean_name}" in ${selectedLocation.code}`);
-    setCountedQtyInput('50');
+
+    // Clear search box and inputs for rapid continuous entry
+    setSkuSearchQuery('');
+    setSelectedSkuForCount(null);
+    setCountedQtyInput('');
     setCountNotes('');
+    setIsDropdownOpen(false);
+
+    // Auto-focus back to Item Search Input so godown staff never need mouse
+    setTimeout(() => {
+      searchInputRef.current?.focus();
+    }, 50);
   };
 
   // 1-Click Excel Template Download
@@ -394,7 +459,7 @@ export const LocationStockView: React.FC = () => {
 
   // Make Location Stock LIVE (Admin Only)
   const handleMakeLocationStockLive = () => {
-    if (currentUser.role !== 'admin') {
+    if (currentUser?.role !== 'admin') {
       showStatus('error', 'Only Admin (Owner / Superuser) has the authority to make Location Stock LIVE.');
       return;
     }
@@ -472,7 +537,7 @@ export const LocationStockView: React.FC = () => {
             <span>+ Add Location</span>
           </button>
 
-          {currentUser.role === 'admin' && (
+          {currentUser?.role === 'admin' && (
             <button
               onClick={handleMakeLocationStockLive}
               className="flex items-center gap-1.5 rounded-xl bg-orange-600 px-4 py-2 text-xs font-bold text-white shadow-xs hover:bg-orange-700 active:scale-95 transition"
@@ -729,7 +794,7 @@ export const LocationStockView: React.FC = () => {
                       >
                         <Edit3 className="h-4 w-4" />
                       </button>
-                      {currentUser.role === 'admin' && (
+                      {currentUser?.role === 'admin' && (
                         <button
                           onClick={() => {
                             if (confirm(`Delete warehouse location ${selectedLocation.code}?`)) {
@@ -768,51 +833,221 @@ export const LocationStockView: React.FC = () => {
                 </div>
               </div>
 
-              {/* Two Column Layout: Left Search SKU + Right Enter Count */}
+              {/* Two Column Layout: Left Search SKU Combobox + Right Enter Count */}
               <div className="mt-5 grid grid-cols-1 lg:grid-cols-12 gap-6">
-                {/* Left: SKU Picker */}
+                {/* Left: 100% Reliable Autocomplete Search Combobox */}
                 <div className="lg:col-span-6 space-y-3">
-                  <div className="relative">
-                    <Search className="h-4 w-4 text-slate-400 absolute left-3 top-2.5" />
-                    <input
-                      type="text"
-                      placeholder="Search SKU name or code to count..."
-                      value={skuSearchQuery}
-                      onChange={(e) => setSkuSearchQuery(e.target.value)}
-                      className="w-full rounded-xl border border-slate-200 bg-slate-50 pl-9 pr-3 py-2 text-xs text-slate-900 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                    />
-                  </div>
-
-                  <div className="max-h-56 overflow-y-auto space-y-1.5 pr-1 border border-slate-100 rounded-xl p-1 dark:border-slate-800">
-                    {searchSkuResults.map(sku => {
-                      const isPicked = selectedSkuForCount?.id === sku.id;
-                      return (
-                        <div
-                          key={sku.id}
-                          onClick={() => setSelectedSkuForCount(sku)}
-                          className={`p-2.5 rounded-lg cursor-pointer text-xs transition border ${
-                            isPicked
-                              ? 'border-orange-500 bg-orange-50/80 font-bold text-orange-900 dark:bg-orange-950/60 dark:text-orange-200'
-                              : 'border-transparent hover:bg-slate-100 text-slate-800 dark:text-slate-200 dark:hover:bg-slate-800'
+                  {/* Division Quick Filter Pills */}
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
+                      Item Search & Autocomplete
+                    </span>
+                    <div className="flex items-center gap-1">
+                      {(['ALL', 'DIM', 'DIN', 'DTR'] as const).map(div => (
+                        <button
+                          key={div}
+                          type="button"
+                          onClick={() => {
+                            setSelectedDivFilter(div);
+                            setIsDropdownOpen(true);
+                          }}
+                          className={`px-2 py-0.5 rounded-md text-[10px] font-bold font-mono transition ${
+                            selectedDivFilter === div
+                              ? 'bg-orange-600 text-white shadow-xs'
+                              : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300'
                           }`}
                         >
-                          <div className="flex items-center justify-between">
-                            <span className="font-mono text-[11px] text-slate-500">{sku.sku_code}</span>
-                            <span className="text-[10px] font-bold uppercase rounded px-1 bg-slate-200 dark:bg-slate-700">{sku.division}</span>
-                          </div>
-                          <div className="truncate mt-0.5">{sku.clean_name}</div>
-                        </div>
-                      );
-                    })}
+                          {div}
+                        </button>
+                      ))}
+                    </div>
                   </div>
+
+                  {/* Relative Container WITHOUT overflow-hidden for zero clipping */}
+                  <div className="relative">
+                    <div className="relative flex items-center">
+                      <Search className="h-4 w-4 text-orange-500 absolute left-3 pointer-events-none" />
+                      <input
+                        ref={searchInputRef}
+                        type="text"
+                        placeholder="Type name, size (19mm, 4&quot;, 8x10), SKU, or code (spa, doe, crv)..."
+                        value={skuSearchQuery}
+                        onChange={(e) => {
+                          setSkuSearchQuery(e.target.value);
+                          setIsDropdownOpen(true);
+                          setHighlightedIndex(0);
+                        }}
+                        onFocus={() => {
+                          setIsDropdownOpen(true);
+                        }}
+                        onBlur={() => {
+                          // Allow onMouseDown on dropdown items to execute before closing
+                          setTimeout(() => setIsDropdownOpen(false), 200);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'ArrowDown') {
+                            e.preventDefault();
+                            setIsDropdownOpen(true);
+                            setHighlightedIndex(prev => Math.min(prev + 1, suggestions.length - 1));
+                          } else if (e.key === 'ArrowUp') {
+                            e.preventDefault();
+                            setHighlightedIndex(prev => Math.max(prev - 1, 0));
+                          } else if (e.key === 'Enter') {
+                            if (isDropdownOpen && suggestions[highlightedIndex]) {
+                              e.preventDefault();
+                              handleSelectSkuForLocation(suggestions[highlightedIndex]);
+                            } else if (selectedSkuForCount) {
+                              e.preventDefault();
+                              qtyInputRef.current?.focus();
+                              qtyInputRef.current?.select();
+                            }
+                          } else if (e.key === 'Escape') {
+                            setIsDropdownOpen(false);
+                          }
+                        }}
+                        className="w-full rounded-xl border-2 border-slate-200 bg-white pl-9 pr-8 py-2.5 text-xs font-medium text-slate-900 shadow-xs focus:border-orange-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                      />
+                      {skuSearchQuery && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSkuSearchQuery('');
+                            setSelectedSkuForCount(null);
+                            setIsDropdownOpen(true);
+                            searchInputRef.current?.focus();
+                          }}
+                          className="absolute right-2.5 p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Autocomplete Dropdown popup (Position absolute, z-50, shadow-2xl, max-h-72) */}
+                    {isDropdownOpen && (
+                      <div 
+                        className="absolute top-full left-0 right-0 mt-1.5 z-50 max-h-72 overflow-y-auto rounded-2xl border-2 border-orange-400 bg-white shadow-2xl dark:border-orange-500 dark:bg-slate-900 divide-y divide-slate-100 dark:divide-slate-800"
+                      >
+                        <div className="sticky top-0 bg-orange-50/95 px-3 py-1.5 text-[10px] font-bold text-orange-900 dark:bg-orange-950/90 dark:text-orange-200 backdrop-blur-xs flex items-center justify-between border-b border-orange-200 dark:border-orange-900 z-10">
+                          <span>
+                            {suggestions.length} {suggestions.length === 1 ? 'item' : 'items'} {skuSearchQuery ? 'matching' : 'available'} (Enter to select)
+                          </span>
+                          <span className="font-mono text-[9px] text-orange-700 dark:text-orange-300">
+                            ↑↓ Navigate
+                          </span>
+                        </div>
+
+                        {suggestions.length === 0 ? (
+                          <div className="p-4 text-center text-xs text-slate-400">
+                            No matching items found for "{skuSearchQuery}". Try dimension (e.g. 19mm, 4", 8x10) or shorthand (spa, doe, crv).
+                          </div>
+                        ) : (
+                          suggestions.map((sku, idx) => {
+                            const isHighlighted = idx === highlightedIndex;
+                            const existingInLoc = locationStockEntries.find(
+                              e => e.locationCode === selectedLocation.code && e.skuId === sku.id
+                            );
+
+                            return (
+                              <div
+                                key={sku.id}
+                                ref={el => {
+                                  if (isHighlighted && el) {
+                                    el.scrollIntoView({ block: 'nearest' });
+                                  }
+                                }}
+                                onMouseDown={(e) => {
+                                  e.preventDefault(); // Prevents input onBlur from closing dropdown before selection!
+                                  handleSelectSkuForLocation(sku);
+                                }}
+                                onMouseEnter={() => setHighlightedIndex(idx)}
+                                className={`p-3 cursor-pointer text-xs transition flex items-center justify-between gap-3 ${
+                                  isHighlighted
+                                    ? 'bg-orange-50 font-semibold text-orange-950 dark:bg-orange-950/60 dark:text-orange-100'
+                                    : 'hover:bg-slate-50 text-slate-800 dark:text-slate-200 dark:hover:bg-slate-800/60'
+                                }`}
+                              >
+                                <div className="flex-1 min-w-0">
+                                  <div className="font-bold text-slate-900 dark:text-white truncate">
+                                    {sku.clean_name}
+                                  </div>
+                                  <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-500 font-mono mt-0.5">
+                                    <span className={`px-1.5 py-0.2 rounded font-bold uppercase ${
+                                      sku.division === 'DIM'
+                                        ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300'
+                                        : sku.division === 'DIN'
+                                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
+                                        : 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300'
+                                    }`}>
+                                      {sku.division}
+                                    </span>
+                                    <span className="truncate">{sku.main_category}{sku.sub_category ? ` › ${sku.sub_category}` : ''}</span>
+                                    <span>•</span>
+                                    <span className="font-semibold text-slate-700 dark:text-slate-300">{sku.sku_code}</span>
+                                  </div>
+                                </div>
+
+                                {/* Badges on right: Existing Qty in Current Location */}
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  {existingInLoc ? (
+                                    <span className="text-[10px] font-bold bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300 px-2 py-0.5 rounded-full border border-indigo-200 dark:border-indigo-800">
+                                      In {selectedLocation.code}: {existingInLoc.countedQty} Pcs
+                                    </span>
+                                  ) : (
+                                    <span className="text-[10px] font-mono text-slate-400">
+                                      Stock: {sku.current_stock}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Active Selected SKU preview card or rapid typing tip */}
+                  {selectedSkuForCount ? (
+                    <div className="p-3 rounded-xl border border-emerald-200 bg-emerald-50/50 dark:border-emerald-900 dark:bg-emerald-950/30 flex items-center justify-between">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-300 uppercase">
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                          <span>Selected for {selectedLocation.code}</span>
+                        </div>
+                        <div className="font-bold text-xs text-slate-900 dark:text-white truncate mt-0.5">
+                          {selectedSkuForCount.clean_name}
+                        </div>
+                        <div className="text-[10px] text-slate-500 font-mono">
+                          {selectedSkuForCount.sku_code} • {selectedSkuForCount.division} • {selectedSkuForCount.main_category}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setSelectedSkuForCount(null);
+                          setSkuSearchQuery('');
+                          searchInputRef.current?.focus();
+                        }}
+                        className="text-slate-400 hover:text-slate-600 text-xs px-2 py-1 rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800 shrink-0"
+                      >
+                        Change
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="p-3 rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-800/40 text-[11px] text-slate-500 leading-relaxed">
+                      💡 <strong>Continuous Factory Flow:</strong> Click search box or type item dimension (e.g. <span className="font-mono text-orange-600 font-bold">19mm</span>, <span className="font-mono text-orange-600 font-bold">4"</span>, <span className="font-mono text-orange-600 font-bold">8x10</span>) or code (<span className="font-mono text-orange-600 font-bold">spa</span>, <span className="font-mono text-orange-600 font-bold">doe</span>). Press Enter to select, type quantity, and press Enter to save & jump straight back to search!
+                    </div>
+                  )}
                 </div>
 
-                {/* Right: Quantity & Notes */}
+                {/* Right: Quantity & Notes with Enter-to-Save */}
                 <div className="lg:col-span-6 flex flex-col justify-between space-y-4 rounded-xl border border-slate-200 bg-slate-50/50 p-4 dark:border-slate-800 dark:bg-slate-800/40">
                   {selectedSkuForCount ? (
                     <div>
-                      <div className="text-[10px] font-bold text-orange-600 uppercase">Selected SKU for {selectedLocation.code}:</div>
-                      <h4 className="font-bold text-slate-900 dark:text-white text-sm mt-0.5">
+                      <div className="text-[10px] font-bold text-orange-600 uppercase">
+                        Physical Count for {selectedLocation.code}:
+                      </div>
+                      <h4 className="font-bold text-slate-900 dark:text-white text-sm mt-0.5 truncate">
                         {selectedSkuForCount.clean_name}
                       </h4>
                       <div className="text-xs text-slate-500 font-mono mt-0.5">
@@ -825,11 +1060,20 @@ export const LocationStockView: React.FC = () => {
                             Counted Quantity ({selectedSkuForCount.unit})
                           </label>
                           <input
+                            ref={qtyInputRef}
                             type="number"
                             min={0}
+                            placeholder="Type count (e.g. 50)"
                             value={countedQtyInput}
                             onChange={(e) => setCountedQtyInput(e.target.value)}
-                            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 font-mono text-base font-black text-slate-900 focus:outline-hidden dark:bg-slate-900 dark:border-slate-700 dark:text-white"
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                handleSaveCountEntry();
+                              }
+                            }}
+                            className="w-full rounded-xl border-2 border-orange-400 bg-white px-3 py-2 font-mono text-lg font-black text-slate-900 focus:outline-hidden dark:bg-slate-900 dark:border-orange-500 dark:text-white shadow-xs"
+                            autoFocus
                           />
                         </div>
 
@@ -842,6 +1086,12 @@ export const LocationStockView: React.FC = () => {
                             placeholder="e.g. 2 boxes + 10 loose"
                             value={countNotes}
                             onChange={(e) => setCountNotes(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                handleSaveCountEntry();
+                              }
+                            }}
                             className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:outline-hidden dark:bg-slate-900 dark:border-slate-700 dark:text-white"
                           />
                         </div>
@@ -849,33 +1099,50 @@ export const LocationStockView: React.FC = () => {
 
                       <button
                         onClick={handleSaveCountEntry}
-                        className="mt-4 w-full rounded-xl bg-orange-600 py-2.5 text-xs font-bold text-white shadow-xs hover:bg-orange-700 active:scale-98 transition flex items-center justify-center gap-2"
+                        className="mt-4 w-full rounded-xl bg-orange-600 py-2.5 text-xs font-black text-white shadow-xs hover:bg-orange-700 active:scale-98 transition flex items-center justify-center gap-2"
                       >
                         <CheckCircle2 className="h-4 w-4" />
-                        <span>Save Physical Count in {selectedLocation.code}</span>
+                        <span>+ Save to {selectedLocation.code} (or Press Enter)</span>
                       </button>
                     </div>
                   ) : (
-                    <div className="flex-1 flex items-center justify-center text-center text-slate-400 text-xs py-10">
-                      Pick an SKU on the left to enter its physical count at {selectedLocation.code}.
+                    <div className="flex-1 flex flex-col items-center justify-center text-center text-slate-400 text-xs py-8">
+                      <Search className="h-8 w-8 text-slate-300 mb-2" />
+                      <p className="font-semibold text-slate-600 dark:text-slate-300">No item selected</p>
+                      <p className="text-[11px] mt-0.5">Use the search box on the left or pick from the suggestion list.</p>
                     </div>
                   )}
 
                   {/* Items already recorded in this location */}
                   <div className="pt-3 border-t border-slate-200 dark:border-slate-800">
-                    <div className="text-[11px] font-bold text-slate-600 dark:text-slate-400 mb-2">
-                      Already Stored in {selectedLocation.code} ({itemsInSelectedLocation.length} items):
+                    <div className="text-[11px] font-bold text-slate-600 dark:text-slate-400 mb-2 flex items-center justify-between">
+                      <span>Already Stored in {selectedLocation.code} ({itemsInSelectedLocation.length} items):</span>
+                      <span className="font-mono text-[10px] text-emerald-600 dark:text-emerald-400 font-bold">
+                        Total: {itemsInSelectedLocation.reduce((s, e) => s + e.countedQty, 0).toLocaleString()} Pcs
+                      </span>
                     </div>
                     {itemsInSelectedLocation.length === 0 ? (
-                      <span className="text-xs text-slate-400 italic">No items stored here yet.</span>
+                      <span className="text-xs text-slate-400 italic">No items stored in {selectedLocation.code} yet.</span>
                     ) : (
-                      <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                      <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
                         {itemsInSelectedLocation.map(it => (
-                          <div key={it.id} className="flex items-center justify-between text-xs bg-white p-2 rounded-lg border border-slate-200 dark:bg-slate-900 dark:border-slate-700">
-                            <span className="truncate max-w-[240px] font-medium">{it.cleanName}</span>
-                            <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400 shrink-0">
-                              {it.countedQty.toLocaleString()} Pcs
-                            </span>
+                          <div key={it.id} className="flex items-center justify-between text-xs bg-white p-2.5 rounded-xl border border-slate-200 dark:bg-slate-900 dark:border-slate-700">
+                            <div className="min-w-0 pr-2">
+                              <span className="font-semibold text-slate-900 dark:text-white truncate block">{it.cleanName}</span>
+                              <span className="text-[10px] text-slate-400 font-mono">{it.skuCode}</span>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className="font-mono font-black text-emerald-600 dark:text-emerald-400">
+                                {it.countedQty.toLocaleString()} Pcs
+                              </span>
+                              <button
+                                onClick={() => deleteLocationStockEntry(it.id)}
+                                className="text-slate-400 hover:text-rose-600 p-1 rounded-md transition"
+                                title="Remove entry"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </button>
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -987,7 +1254,7 @@ export const LocationStockView: React.FC = () => {
                   <span>Apply Outward Deduction to Location Stock</span>
                 </button>
 
-                {currentUser.role === 'admin' && (
+                {currentUser?.role === 'admin' && (
                   <button
                     onClick={handleMakeLocationStockLive}
                     className="flex items-center gap-1.5 rounded-xl bg-orange-600 px-4 py-2 text-xs font-bold text-white shadow-xs hover:bg-orange-700 transition"
@@ -1072,7 +1339,7 @@ export const LocationStockView: React.FC = () => {
               <p className="text-xs text-slate-500">Every counted item across Racks, Pallets, and Bins.</p>
             </div>
 
-            {locationStockEntries.length > 0 && currentUser.role === 'admin' && (
+            {locationStockEntries.length > 0 && currentUser?.role === 'admin' && (
               <button
                 onClick={() => {
                   if (confirm('Clear all physical location count entries?')) {

@@ -120,7 +120,7 @@ interface InventoryStore {
 
   // Role-Based Users & Permissions
   users: AppUser[];
-  currentUser: AppUser;
+  currentUser: AppUser | null;
 
   // Search Engine Instance
   searchEngine: InventorySearchEngine;
@@ -226,7 +226,8 @@ interface InventoryStore {
   restoreFullDatabase: (backupData: any) => { success: boolean; message: string };
 
   // User Management
-  setCurrentUser: (user: AppUser) => void;
+  setCurrentUser: (user: AppUser | null) => void;
+  logout: () => void;
 
   // Complete Data Deletion & Purge Options
   clearAllLocationCounts: () => void;
@@ -292,7 +293,17 @@ const getInitialState = () => {
             })
           : defaultUsers;
 
-        const activeCurUser = sanitizedUsers.find(u => u.id === parsed.currentUser?.id) || sanitizedUsers[0] || defaultUsers[0];
+        const savedSessionUserId = (() => {
+          try {
+            return sessionStorage.getItem('okf_logged_in_user_id');
+          } catch (e) {
+            return null;
+          }
+        })();
+
+        const activeCurUser = savedSessionUserId
+          ? (sanitizedUsers.find(u => u.id === savedSessionUserId) || null)
+          : null;
 
         return {
           skus: parsed.skus as SkuItem[],
@@ -334,7 +345,7 @@ const getInitialState = () => {
       reconciledOrders: []
     } as CountSession,
     users: defaultUsers,
-    currentUser: defaultUsers[0]
+    currentUser: null
   };
 };
 
@@ -418,14 +429,27 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
     const state = get();
     const user = state.users.find(u => u.pin === pin.trim());
     if (user) {
+      try {
+        sessionStorage.setItem('okf_logged_in_user_id', user.id);
+      } catch (e) {}
       set({ currentUser: user });
       saveStorage({
         ...state,
         currentUser: user
       });
-      return { success: true, message: `Switched user to ${user.name} (${user.role.toUpperCase()})`, user };
+      return { success: true, message: `Welcome, ${user.name}! (${user.role.toUpperCase()})`, user };
     }
     return { success: false, message: 'Invalid PIN. Please check and try again.' };
+  },
+
+  logout: () => {
+    const state = get();
+    try {
+      sessionStorage.removeItem('okf_logged_in_user_id');
+      localStorage.removeItem('okf_logged_in_user_id');
+    } catch (e) {}
+    set({ currentUser: null });
+    saveStorage({ ...state, currentUser: null });
   },
 
   addUser: (userData) => {
@@ -442,7 +466,7 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
   updateUser: (id, updates) => {
     const state = get();
     const nextUsers = state.users.map(u => u.id === id ? { ...u, ...updates } : u);
-    const nextCurrentUser = state.currentUser.id === id ? { ...state.currentUser, ...updates } : state.currentUser;
+    const nextCurrentUser = state.currentUser?.id === id ? { ...state.currentUser, ...updates } : state.currentUser;
     set({ users: nextUsers, currentUser: nextCurrentUser });
     saveStorage({ ...state, users: nextUsers, currentUser: nextCurrentUser });
   },
@@ -451,7 +475,7 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
     const state = get();
     if (state.users.length <= 1) return;
     const nextUsers = state.users.filter(u => u.id !== id);
-    const nextCurrentUser = state.currentUser.id === id ? nextUsers[0] : state.currentUser;
+    const nextCurrentUser = state.currentUser?.id === id ? nextUsers[0] : state.currentUser;
     set({ users: nextUsers, currentUser: nextCurrentUser });
     saveStorage({ ...state, users: nextUsers, currentUser: nextCurrentUser });
   },
@@ -1603,7 +1627,7 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
           type: 'LOCATION_RECONCILIATION',
           quantity: liveQty,
           reason: `Physical Warehouse Location Count Go-Live Sync (${binString})`,
-          performed_by: `${state.currentUser.name} (Admin Live Sync)`,
+          performed_by: `${state.currentUser?.name || 'Admin'} (Admin Live Sync)`,
           timestamp: new Date().toISOString(),
           prev_stock: prevStock,
           new_stock: liveQty,
@@ -1740,8 +1764,18 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
   },
 
   // User Management Implementations
-  setCurrentUser: (user: AppUser) => {
+  setCurrentUser: (user: AppUser | null) => {
     const state = get();
+    if (user) {
+      try {
+        sessionStorage.setItem('okf_logged_in_user_id', user.id);
+      } catch (e) {}
+    } else {
+      try {
+        sessionStorage.removeItem('okf_logged_in_user_id');
+        localStorage.removeItem('okf_logged_in_user_id');
+      } catch (e) {}
+    }
     set({ currentUser: user });
     saveStorage({ ...state, currentUser: user });
   },

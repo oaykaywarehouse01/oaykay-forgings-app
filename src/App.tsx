@@ -17,9 +17,11 @@ import { KeyboardShortcutsModal } from './components/KeyboardShortcutsModal';
 import { AddNewSkuModal } from './components/AddNewSkuModal';
 import { UserManagementModal } from './components/UserManagementModal';
 import { CloudSyncModal } from './components/CloudSyncModal';
+import { LoginScreen } from './components/LoginScreen';
 
 export const App: React.FC = () => {
   const { 
+    currentUser,
     activeModule, 
     isDarkMode,
     setKeyboardShortcutsOpen, 
@@ -55,6 +57,11 @@ export const App: React.FC = () => {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isKeyboardShortcutsOpen, isCommandPaletteOpen, selectedSku]);
+
+  // If no user is logged in, show the clean full-screen Login Screen!
+  if (!currentUser) {
+    return <LoginScreen />;
+  }
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 antialiased selection:bg-orange-500 selection:text-white">

@@ -45,7 +45,7 @@ export const StockEntryView: React.FC = () => {
   const [selectedLocation, setSelectedLocation] = useState<string>(warehouseLocations[0]?.code || 'A1');
   const [referenceNo, setReferenceNo] = useState<string>('');
   const [notes, setNotes] = useState<string>('');
-  const [operator, setOperator] = useState<string>(currentUser.name);
+  const [operator, setOperator] = useState<string>(currentUser?.name || 'Staff');
   const [successToast, setSuccessToast] = useState<string | null>(null);
 
   // Logs Table Filters
@@ -84,7 +84,7 @@ export const StockEntryView: React.FC = () => {
       txnType === 'STOCK_IN' 
         ? `Inward Receipt: ${referenceNo || 'General'}` 
         : `Dispatch Outward: ${referenceNo || 'General'}`,
-      operator || currentUser.name,
+      operator || currentUser?.name || 'Staff',
       notes,
       selectedLocation ? normalizeLocationCode(selectedLocation) : undefined,
       referenceNo

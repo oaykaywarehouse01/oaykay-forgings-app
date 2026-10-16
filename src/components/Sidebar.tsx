@@ -10,10 +10,12 @@ import {
   Layers,
   Truck,
   MapPin,
-  ShieldCheck
+  ShieldCheck,
+  LogOut
 } from 'lucide-react';
 import { useInventoryStore } from '../store/useInventoryStore';
 import { ActiveNavModule, DivisionCode } from '../types/inventory';
+import { isModuleAllowedForRole } from '../lib/userPermissions';
 
 export const Sidebar: React.FC = () => {
   const { 
@@ -28,6 +30,7 @@ export const Sidebar: React.FC = () => {
     navigateToLevel,
     locationStockEntries,
     currentUser,
+    logout,
     setUserManagementModalOpen
   } = useInventoryStore();
 
@@ -131,124 +134,130 @@ export const Sidebar: React.FC = () => {
       <div className="flex-1 overflow-y-auto px-3 py-4 space-y-6">
         <div>
           <div className="px-3 pb-2 text-[10px] font-bold tracking-wider text-slate-400 uppercase">
-            Core Modules
+            {currentUser?.role === 'count_staff' ? 'Assigned Module' : 'Core Modules'}
           </div>
           <nav className="space-y-1">
-            {navItems.map((item) => {
-              const Icon = item.icon;
-              const isActive = activeModule === item.id;
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => {
-                    setActiveModule(item.id);
-                    if (item.id === 'stock-master' && drillDown.level === 1) {
-                      navigateToLevel(1);
-                    }
-                  }}
-                  className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-xs font-medium transition ${
-                    isActive
-                      ? 'bg-orange-50 text-orange-950 font-semibold dark:bg-orange-950/40 dark:text-orange-200'
-                      : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800/60 dark:hover:text-slate-200'
-                  }`}
-                >
-                  <div className="flex items-center gap-2.5">
-                    <Icon className={`h-4 w-4 ${isActive ? 'text-orange-600 dark:text-orange-400' : 'text-slate-400'}`} />
-                    <span>{item.label}</span>
-                  </div>
-                  {item.badge !== undefined && (
-                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold tabular-nums ${item.badgeColor || 'bg-slate-100 text-slate-600'}`}>
-                      {item.badge}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
+            {navItems
+              .filter((item) => currentUser ? isModuleAllowedForRole(item.id, currentUser.role) : true)
+              .map((item) => {
+                const Icon = item.icon;
+                const isActive = activeModule === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => {
+                      setActiveModule(item.id);
+                      if (item.id === 'stock-master' && drillDown.level === 1) {
+                        navigateToLevel(1);
+                      }
+                    }}
+                    className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-xs font-medium transition ${
+                      isActive
+                        ? 'bg-orange-50 text-orange-950 font-semibold dark:bg-orange-950/40 dark:text-orange-200'
+                        : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800/60 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <Icon className={`h-4 w-4 ${isActive ? 'text-orange-600 dark:text-orange-400' : 'text-slate-400'}`} />
+                      <span>{item.label}</span>
+                    </div>
+                    {item.badge !== undefined && (
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold tabular-nums ${item.badgeColor || 'bg-slate-100 text-slate-600'}`}>
+                        {item.badge}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
           </nav>
         </div>
 
-        {/* Divisions Quick Drill-Down */}
-        <div>
-          <div className="px-3 pb-2 text-[10px] font-bold tracking-wider text-slate-400 uppercase flex items-center justify-between">
-            <span>Domestic Divisions</span>
-            <span className="font-mono text-[9px] text-slate-400">3 DVS</span>
-          </div>
-          <div className="space-y-1">
-            {(['DIM', 'DIN', 'DTR'] as const).map((divCode) => {
-              const div = divisions[divCode] || { total_skus: 0, total_stock: 0 };
-              const isSelected = activeModule === 'stock-master' && drillDown.division === divCode;
+        {/* Divisions Quick Drill-Down (Only for Admin, Dispatch, Inward) */}
+        {currentUser?.role !== 'count_staff' && (
+          <div>
+            <div className="px-3 pb-2 text-[10px] font-bold tracking-wider text-slate-400 uppercase flex items-center justify-between">
+              <span>Domestic Divisions</span>
+              <span className="font-mono text-[9px] text-slate-400">3 DVS</span>
+            </div>
+            <div className="space-y-1">
+              {(['DIM', 'DIN', 'DTR'] as const).map((divCode) => {
+                const div = divisions[divCode] || { total_skus: 0, total_stock: 0 };
+                const isSelected = activeModule === 'stock-master' && drillDown.division === divCode;
 
-              return (
-                <button
-                  key={divCode}
-                  onClick={() => handleDivisionClick(divCode)}
-                  className={`group flex w-full items-center justify-between rounded-lg px-3 py-2 text-xs transition ${
-                    isSelected
-                      ? 'bg-slate-100 font-semibold text-slate-900 dark:bg-slate-800 dark:text-white'
-                      : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800/40 dark:hover:text-slate-200'
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <span className={`inline-flex items-center justify-center rounded px-1.5 py-0.5 text-[10px] font-bold font-mono ${
-                      divCode === 'DIM'
-                        ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300'
-                        : divCode === 'DIN'
-                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
-                        : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
-                    }`}>
-                      {divCode}
-                    </span>
-                    <span className="truncate text-left text-xs font-medium">
-                      {divCode === 'DIM' ? 'Import (DIM)' : divCode === 'DIN' ? 'In-House (DIN)' : 'Trading (DTR)'}
-                    </span>
-                  </div>
-                  <div className="text-right">
-                    <div className="font-mono text-[11px] text-slate-600 dark:text-slate-300 font-bold tabular-nums">
-                      {div.total_skus}
+                return (
+                  <button
+                    key={divCode}
+                    onClick={() => handleDivisionClick(divCode)}
+                    className={`group flex w-full items-center justify-between rounded-lg px-3 py-2 text-xs transition ${
+                      isSelected
+                        ? 'bg-slate-100 font-semibold text-slate-900 dark:bg-slate-800 dark:text-white'
+                        : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800/40 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className={`inline-flex items-center justify-center rounded px-1.5 py-0.5 text-[10px] font-bold font-mono ${
+                        divCode === 'DIM'
+                          ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300'
+                          : divCode === 'DIN'
+                          ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
+                          : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                      }`}>
+                        {divCode}
+                      </span>
+                      <span className="truncate text-left text-xs font-medium">
+                        {divCode === 'DIM' ? 'Import (DIM)' : divCode === 'DIN' ? 'In-House (DIN)' : 'Trading (DTR)'}
+                      </span>
                     </div>
-                  </div>
-                </button>
-              );
-            })}
+                    <div className="text-right">
+                      <div className="font-mono text-[11px] text-slate-600 dark:text-slate-300 font-bold tabular-nums">
+                        {div.total_skus}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        </div>
+        )}
 
-        {/* Audit Coverage Progress Card */}
-        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-800/50">
-          <div className="text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-2 flex items-center justify-between">
-            <span>Audit Coverage</span>
-            <span className="font-mono text-[10px] font-bold text-indigo-600 dark:text-indigo-400 tabular-nums">
-              {stats.total_audited_skus} / {stats.total_skus}
-            </span>
+        {/* Audit Coverage Progress Card (Only for non-count-staff) */}
+        {currentUser?.role !== 'count_staff' && (
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-800/50">
+            <div className="text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-2 flex items-center justify-between">
+              <span>Audit Coverage</span>
+              <span className="font-mono text-[10px] font-bold text-indigo-600 dark:text-indigo-400 tabular-nums">
+                {stats.total_audited_skus} / {stats.total_skus}
+              </span>
+            </div>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
+              <div 
+                className="h-full rounded-full bg-indigo-600 transition-all duration-500"
+                style={{ width: `${(stats.total_audited_skus / stats.total_skus) * 100}%` }}
+              />
+            </div>
+            <div className="mt-2.5 flex items-center justify-between text-[10px] text-slate-500 dark:text-slate-400">
+              <span className="flex items-center gap-1">
+                <CheckCircle2 className="h-3 w-3 text-emerald-500" />
+                <span>{stats.total_positive_stock} Positive</span>
+              </span>
+              <span className="flex items-center gap-1 font-mono text-rose-600 dark:text-rose-400">
+                <TrendingDown className="h-3 w-3" />
+                <span>{stats.total_zero_stock} Zero</span>
+              </span>
+            </div>
           </div>
-          <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
-            <div 
-              className="h-full rounded-full bg-indigo-600 transition-all duration-500"
-              style={{ width: `${(stats.total_audited_skus / stats.total_skus) * 100}%` }}
-            />
-          </div>
-          <div className="mt-2.5 flex items-center justify-between text-[10px] text-slate-500 dark:text-slate-400">
-            <span className="flex items-center gap-1">
-              <CheckCircle2 className="h-3 w-3 text-emerald-500" />
-              <span>{stats.total_positive_stock} Positive</span>
-            </span>
-            <span className="flex items-center gap-1 font-mono text-rose-600 dark:text-rose-400">
-              <TrendingDown className="h-3 w-3" />
-              <span>{stats.total_zero_stock} Zero</span>
-            </span>
-          </div>
-        </div>
+        )}
       </div>
 
-      {/* Footer System Status & Active User */}
-      <div className="border-t border-slate-200 p-3 dark:border-slate-800 space-y-2">
-        {/* Active User Switcher Pill */}
-        <button
-          onClick={() => setUserManagementModalOpen(true)}
-          className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 p-2 text-left hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-800/80 dark:hover:bg-slate-800 transition"
-          title="Click to Switch User / Role via PIN"
-        >
-          <div className="flex items-center gap-2 min-w-0">
+      {/* Footer System Status & Active User with 1-Click Logout */}
+      <div className="border-t border-slate-200 p-3 dark:border-slate-800 space-y-2.5">
+        {/* Active User Badge & 1-Click Logout */}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setUserManagementModalOpen(true)}
+            className="flex-1 min-w-0 flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 p-2 text-left hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-800/80 dark:hover:bg-slate-800 transition"
+            title="Click to Switch User / Role"
+          >
             <div className={`h-7 w-7 rounded-lg flex items-center justify-center text-white font-black text-xs shrink-0 shadow-xs ${currentUser?.avatarColor || 'bg-slate-700'}`}>
               {currentUser?.name ? currentUser.name.charAt(0).toUpperCase() : 'A'}
             </div>
@@ -257,14 +266,20 @@ export const Sidebar: React.FC = () => {
                 {currentUser?.name || 'Admin'}
               </span>
               <span className="text-[10px] text-slate-400 capitalize truncate">
-                {currentUser?.role === 'admin' ? 'Super Admin' : currentUser?.role?.replace('_', ' ')}
+                {currentUser?.role === 'admin' ? 'Admin' : currentUser?.role?.replace('_', ' ')}
               </span>
             </div>
-          </div>
-          <span className="text-[10px] font-bold text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded border border-orange-200 dark:bg-orange-950 dark:border-orange-900 shrink-0">
-            PIN
-          </span>
-        </button>
+          </button>
+
+          <button
+            onClick={logout}
+            className="flex items-center gap-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white px-3 py-2 text-xs font-bold transition shadow-xs shrink-0"
+            title="Log Out (Locks screen to Login)"
+          >
+            <LogOut className="h-3.5 w-3.5" />
+            <span>Logout</span>
+          </button>
+        </div>
 
         <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 px-1">
           <div className="flex items-center gap-1.5">
