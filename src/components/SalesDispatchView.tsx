@@ -731,8 +731,8 @@ export const SalesDispatchView: React.FC = () => {
             display: none !important;
           }
           .print-page-break {
-            page-break-after: always;
             break-inside: avoid;
+            page-break-inside: avoid;
           }
           input {
             border: none !important;

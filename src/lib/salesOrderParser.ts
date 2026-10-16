@@ -218,25 +218,31 @@ export const parseSalesOrderExcel = async (file: File, skus: SkuItem[]): Promise
   }
   if (!partyName) partyName = 'R M Tools Solutions';
 
-  // 4. State Name & State Code: Find row where Col A is 'State Name :'
+  // 4. State Name & State Code: Search starting from Consignee / Buyer row (NOT Seller Row 9!)
   let stateName = 'Delhi';
   let stateCode = '07';
+  const stateSearchStart = consigneeRowIdx !== -1 ? consigneeRowIdx : (buyerRowIdx !== -1 ? buyerRowIdx : 10);
 
-  for (let r = 0; r < Math.min(rows.length, 30); r++) {
+  for (let r = stateSearchStart; r < Math.min(rows.length, 32); r++) {
     const colA = String(rows[r]?.[0] || '').toLowerCase().trim();
     if (colA.includes('state name')) {
-      // Check Col D (index 3) or subsequent columns
-      const stateCell = String(rows[r]?.[3] || rows[r]?.[1] || rows[r]?.[2] || '');
-      if (stateCell) {
-        // e.g. "Delhi, Code : 07"
-        const parts = stateCell.split(',');
-        if (parts[0]) stateName = parts[0].trim();
-        if (parts[1]) {
-          const codeMatch = parts[1].match(/\d+/);
-          if (codeMatch) stateCode = codeMatch[0];
-        }
+      // Check Col D (index 3) or subsequent non-empty columns in this row, or inline after ':' in Col A
+      let stateCell = String(rows[r]?.[3] || rows[r]?.[2] || rows[r]?.[1] || '').trim();
+      if (!stateCell && colA.includes(':')) {
+        stateCell = String(rows[r]?.[0] || '').split(':').slice(1).join(':').trim();
       }
-      break;
+      if (stateCell) {
+        // e.g. "Delhi, Code : 07" or "Haryana, Code : 06"
+        const parts = stateCell.split(',');
+        if (parts[0] && parts[0].trim()) {
+          stateName = parts[0].trim();
+        }
+        const codeMatch = stateCell.match(/code\s*:\s*(\d+)/i) || (parts[1] ? parts[1].match(/\d+/) : null);
+        if (codeMatch) {
+          stateCode = codeMatch[1] || codeMatch[0];
+        }
+        break;
+      }
     }
   }
 
@@ -410,6 +416,13 @@ export const generateCartonsAndPackagingList = (soData: SalesOrderData): Packing
     }
   });
 
+  // Collect all manually reserved assignedBoxNo values upfront so Auto boxes never collide
+  const reservedBoxNos = new Set(standardOrSplitItems.map(i => i.assignedBoxNo).filter(Boolean) as number[]);
+  Object.keys(explicitMixedGroups).forEach(k => {
+    const num = parseInt(k, 10);
+    if (!isNaN(num) && num > 0) reservedBoxNos.add(num);
+  });
+
   // Pack standard and split tool items
   standardOrSplitItems.forEach(item => {
     const totalQty = typeof item.dispatchQty === 'number' ? Math.round(item.dispatchQty) : Math.round(item.orderedQty);
@@ -419,6 +432,11 @@ export const generateCartonsAndPackagingList = (soData: SalesOrderData): Packing
     const grossWtPerBox = Number(Number(item.grossWeightPerBox || 15.00).toFixed(2));
 
     let remainingQty = totalQty;
+    if (!item.assignedBoxNo) {
+      while (reservedBoxNos.has(currentCartonNo)) {
+        currentCartonNo++;
+      }
+    }
     let boxNum = item.assignedBoxNo ? item.assignedBoxNo : currentCartonNo;
 
     while (remainingQty > 0) {
@@ -471,6 +489,9 @@ export const generateCartonsAndPackagingList = (soData: SalesOrderData): Packing
 
       if (!item.assignedBoxNo) {
         currentCartonNo++;
+        while (reservedBoxNos.has(currentCartonNo)) {
+          currentCartonNo++;
+        }
         boxNum = currentCartonNo;
       } else {
         boxNum++;

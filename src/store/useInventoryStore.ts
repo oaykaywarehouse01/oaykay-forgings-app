@@ -287,6 +287,7 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
         categories: state.categories,
         divisions: nextDivisions,
         transactions: nextTransactions,
+        deductedSalesOrders: state.deductedSalesOrders,
       }));
     } catch (e) {
       console.warn('Storage save error', e);
@@ -362,6 +363,7 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
         categories: state.categories,
         divisions: nextDivisions,
         transactions: nextTransactions,
+        deductedSalesOrders: state.deductedSalesOrders,
       }));
     } catch (e) {
       console.warn('Storage save error', e);
@@ -422,6 +424,7 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
         categories: nextCategories,
         divisions: state.divisions,
         transactions: nextTransactions,
+        deductedSalesOrders: state.deductedSalesOrders,
       }));
     } catch (e) {
       console.warn('Storage save error', e);
@@ -457,6 +460,7 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
         categories: state.categories,
         divisions: state.divisions,
         transactions: state.transactions,
+        deductedSalesOrders: state.deductedSalesOrders,
       }));
     } catch (e) {
       console.warn('Storage save error', e);
@@ -500,6 +504,7 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
         categories: nextCategories,
         divisions: state.divisions,
         transactions: state.transactions,
+        deductedSalesOrders: state.deductedSalesOrders,
       }));
     } catch (e) {
       console.warn('Storage save error', e);
@@ -523,7 +528,8 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
       stats: computeStats(skus),
       searchEngine: engine,
       selectedSku: null,
-      globalSearchQuery: ''
+      globalSearchQuery: '',
+      deductedSalesOrders: {}
     });
   },
 
@@ -642,6 +648,7 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
               categories: state.categories,
               divisions: nextDivisions,
               transactions: state.transactions,
+              deductedSalesOrders: state.deductedSalesOrders,
             }));
           } catch (err) {
             console.warn(err);

@@ -238,7 +238,7 @@ export const Sidebar: React.FC = () => {
           <span className="font-mono text-[10px] font-semibold text-slate-500">v2.0 QTY</span>
         </div>
         <p className="mt-0.5 text-[10px] text-slate-400 font-mono">
-          1,421 SKUs • 3,812,303.94 Stock
+          {stats.total_skus.toLocaleString()} SKUs • {stats.total_stock.toLocaleString()} Units
         </p>
       </div>
     </aside>

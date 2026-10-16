@@ -48,7 +48,7 @@ export const TallySyncView: React.FC = () => {
   const handleReset = () => {
     resetToInitialSeed();
     setResetConfirm(false);
-    setImportStatus('Successfully restored initial 1,421 SKU seed dataset with 3,812,303.94 total physical stock.');
+    setImportStatus('Successfully restored initial 1,421 SKU seed dataset with 3,812,304 total physical stock.');
   };
 
   return (
@@ -201,7 +201,7 @@ export const TallySyncView: React.FC = () => {
               Reset to 1,421 Seed Dataset
             </h3>
             <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-              Clears local manual changes and restores the exact 1,421 SKUs and 3,812,303.94 stock units parsed from <code className="font-mono text-orange-600">OKF STOCK DIN, DIM &amp; DTR 10.10.26 QTY.xlsx</code>.
+              Clears local manual changes and restores the exact 1,421 SKUs and 3,812,304 stock units parsed from <code className="font-mono text-orange-600">OKF STOCK DIN, DIM &amp; DTR 10.10.26 QTY.xlsx</code>.
             </p>
 
             <div className="mt-4 rounded-lg bg-amber-50 p-3 text-[11px] text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
