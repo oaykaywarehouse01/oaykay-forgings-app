@@ -254,7 +254,7 @@ export const Sidebar: React.FC = () => {
             </div>
             <div className="flex flex-col min-w-0">
               <span className="text-xs font-bold text-slate-900 dark:text-white truncate">
-                {currentUser?.name || 'Administrator'}
+                {currentUser?.name || 'Admin'}
               </span>
               <span className="text-[10px] text-slate-400 capitalize truncate">
                 {currentUser?.role === 'admin' ? 'Super Admin' : currentUser?.role?.replace('_', ' ')}

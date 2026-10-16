@@ -9,7 +9,11 @@ import {
   Lock, 
   UserCheck, 
   Trash2,
-  Edit2
+  Edit2,
+  Check,
+  X,
+  AlertTriangle,
+  RotateCcw
 } from 'lucide-react';
 import { useInventoryStore } from '../store/useInventoryStore';
 import { AppUser, UserRole } from '../types/inventory';
@@ -23,13 +27,30 @@ export const UserManagementModal: React.FC = () => {
     setCurrentUserByPin,
     addUser,
     updateUser,
-    deleteUser
+    deleteUser,
+    transactions,
+    locationStockEntries,
+    deductedSalesOrders,
+    clearTransactions,
+    clearAllLocationCounts,
+    clearAllDispatchedOrders,
+    resetDatabaseClean
   } = useInventoryStore();
 
-  const [activeTab, setActiveTab] = useState<'switch' | 'manage'>('switch');
+  const [activeTab, setActiveTab] = useState<'switch' | 'manage' | 'purge'>('switch');
   const [pinInput, setPinInput] = useState('');
   const [pinError, setPinError] = useState<string | null>(null);
   const [switchSuccess, setSwitchSuccess] = useState<string | null>(null);
+  const [purgeStatus, setPurgeStatus] = useState<string | null>(null);
+
+  // Edit Active User Name inline
+  const [isEditingCurName, setIsEditingCurName] = useState(false);
+  const [curNameInput, setCurNameInput] = useState(currentUser.name);
+
+  // Edit another user state
+  const [editingUserId, setEditingUserId] = useState<string | null>(null);
+  const [editUserName, setEditUserName] = useState('');
+  const [editUserPin, setEditUserPin] = useState('');
 
   // New user form state
   const [isAddingUser, setIsAddingUser] = useState(false);
@@ -128,12 +149,57 @@ export const UserManagementModal: React.FC = () => {
               {currentUser.name.charAt(0)}
             </div>
             <div>
-              <div className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2">
-                <span>{currentUser.name}</span>
-                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase text-slate-700 dark:bg-slate-800 dark:text-slate-300">
-                  {currentUser.role.replace('_', ' ')}
-                </span>
-              </div>
+              {isEditingCurName ? (
+                <div className="flex items-center gap-1.5 mt-0.5">
+                  <input
+                    type="text"
+                    value={curNameInput}
+                    onChange={(e) => setCurNameInput(e.target.value)}
+                    className="rounded-lg border border-orange-400 bg-white px-2 py-0.5 text-xs font-bold text-slate-900 dark:bg-slate-800 dark:text-white"
+                    placeholder="Your Name (e.g. Manish / Admin)"
+                    autoFocus
+                  />
+                  <button
+                    onClick={() => {
+                      if (curNameInput.trim()) {
+                        updateUser(currentUser.id, { name: curNameInput.trim() });
+                        setIsEditingCurName(false);
+                      }
+                    }}
+                    className="rounded-lg bg-emerald-600 p-1 text-white hover:bg-emerald-700 transition"
+                    title="Save Display Name"
+                  >
+                    <Check className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    onClick={() => {
+                      setCurNameInput(currentUser.name);
+                      setIsEditingCurName(false);
+                    }}
+                    className="rounded-lg bg-slate-200 p-1 text-slate-600 hover:bg-slate-300 dark:bg-slate-700 dark:text-slate-300"
+                    title="Cancel"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ) : (
+                <div className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2">
+                  <span>{currentUser.name}</span>
+                  <button
+                    onClick={() => {
+                      setCurNameInput(currentUser.name);
+                      setIsEditingCurName(true);
+                    }}
+                    className="text-slate-400 hover:text-orange-600 transition p-0.5"
+                    title="Rename Profile (Set your own name)"
+                  >
+                    <Edit2 className="h-3 w-3" />
+                  </button>
+                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                    {currentUser.role.replace('_', ' ')}
+                  </span>
+                </div>
+              )}
               <div className="text-xs text-slate-400">Current Active Session</div>
             </div>
           </div>
@@ -170,13 +236,34 @@ export const UserManagementModal: React.FC = () => {
               }`}
             >
               <ShieldCheck className="h-3.5 w-3.5" />
-              <span>Admin Control Panel ({users.length})</span>
+              <span>Admin Users ({users.length})</span>
+            </button>
+          )}
+
+          {currentUser.role === 'admin' && (
+            <button
+              onClick={() => setActiveTab('purge')}
+              className={`pb-2.5 flex items-center gap-1.5 border-b-2 transition ${
+                activeTab === 'purge'
+                  ? 'border-rose-500 text-rose-600 dark:text-rose-400'
+                  : 'border-transparent text-slate-400 hover:text-slate-600'
+              }`}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              <span>Data Delete & Reset</span>
             </button>
           )}
         </div>
 
         {/* Content */}
         <div className="p-6">
+          {purgeStatus && (
+            <div className="mb-4 flex items-center gap-2 rounded-xl bg-emerald-50 border border-emerald-300 p-3 text-xs font-bold text-emerald-900 dark:bg-emerald-950 dark:border-emerald-800 dark:text-emerald-200 animate-in fade-in">
+              <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+              <span>{purgeStatus}</span>
+            </div>
+          )}
+
           {activeTab === 'switch' && (
             <div className="space-y-5">
               <div className="text-center">
@@ -184,7 +271,7 @@ export const UserManagementModal: React.FC = () => {
                   Switch Operator via 4-Digit Security PIN
                 </h3>
                 <p className="text-xs text-slate-500 mt-1">
-                  Default Pre-Configured PINs: Admin (1234), Dispatch (2222), Storekeeper (3333), Count Staff (4444)
+                  Default PINs: Admin (1234), Dispatch (2222), Storekeeper (3333), Count Staff (4444)
                 </p>
               </div>
 
@@ -265,7 +352,7 @@ export const UserManagementModal: React.FC = () => {
                     <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">User Full Name:</label>
                     <input
                       type="text"
-                      placeholder="e.g. A. Gupta (Supervisor)"
+                      placeholder="e.g. Supervisor Name"
                       value={newUserName}
                       onChange={(e) => setNewUserName(e.target.value)}
                       className="w-full rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 dark:bg-slate-800 dark:border-slate-700 dark:text-white"
@@ -311,33 +398,203 @@ export const UserManagementModal: React.FC = () => {
                 </form>
               )}
 
-              {/* Users list */}
+              {/* Users list with inline editing */}
               <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
                 {users.map(u => (
-                  <div key={u.id} className="flex items-center justify-between p-3 rounded-xl border border-slate-200 bg-slate-50/60 dark:border-slate-800 dark:bg-slate-800/40">
-                    <div className="flex items-center gap-2.5">
-                      <div className={`h-8 w-8 rounded-xl flex items-center justify-center text-white font-bold text-xs ${u.avatarColor}`}>
-                        {u.name.charAt(0)}
-                      </div>
-                      <div>
-                        <div className="text-xs font-bold text-slate-900 dark:text-white">{u.name}</div>
-                        <div className="text-[10px] text-slate-500 font-mono capitalize">
-                          {u.role.replace('_', ' ')} • PIN: <strong>{u.pin}</strong>
+                  <div key={u.id} className="p-3 rounded-xl border border-slate-200 bg-slate-50/60 dark:border-slate-800 dark:bg-slate-800/40">
+                    {editingUserId === u.id ? (
+                      <div className="space-y-2">
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-400 block mb-0.5">Name:</label>
+                            <input
+                              type="text"
+                              value={editUserName}
+                              onChange={(e) => setEditUserName(e.target.value)}
+                              className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-bold text-slate-900 dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-400 block mb-0.5">PIN:</label>
+                            <input
+                              type="text"
+                              maxLength={6}
+                              value={editUserPin}
+                              onChange={(e) => setEditUserPin(e.target.value)}
+                              className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-mono font-bold text-slate-900 dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                            />
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-end gap-2 pt-1">
+                          <button
+                            onClick={() => setEditingUserId(null)}
+                            className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-slate-500 hover:bg-slate-100"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            onClick={() => {
+                              if (editUserName.trim() && editUserPin.trim()) {
+                                updateUser(u.id, { name: editUserName.trim(), pin: editUserPin.trim() });
+                                setEditingUserId(null);
+                              }
+                            }}
+                            className="rounded-lg bg-orange-600 px-3 py-1 text-xs font-bold text-white hover:bg-orange-700"
+                          >
+                            Save
+                          </button>
                         </div>
                       </div>
-                    </div>
+                    ) : (
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2.5">
+                          <div className={`h-8 w-8 rounded-xl flex items-center justify-center text-white font-bold text-xs ${u.avatarColor}`}>
+                            {u.name.charAt(0)}
+                          </div>
+                          <div>
+                            <div className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                              <span>{u.name}</span>
+                              {u.id === currentUser.id && (
+                                <span className="text-[9px] bg-orange-100 text-orange-700 dark:bg-orange-950 dark:text-orange-300 font-bold px-1.5 py-0.2 rounded-sm">Active</span>
+                              )}
+                            </div>
+                            <div className="text-[10px] text-slate-500 font-mono capitalize">
+                              {u.role.replace('_', ' ')} • PIN: <strong>{u.pin}</strong>
+                            </div>
+                          </div>
+                        </div>
 
-                    {users.length > 1 && u.id !== currentUser.id && (
-                      <button
-                        onClick={() => deleteUser(u.id)}
-                        className="text-slate-400 hover:text-rose-600 transition p-1"
-                        title="Delete user"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => {
+                              setEditingUserId(u.id);
+                              setEditUserName(u.name);
+                              setEditUserPin(u.pin);
+                            }}
+                            className="text-slate-400 hover:text-orange-600 transition p-1"
+                            title="Edit User Name & PIN"
+                          >
+                            <Edit2 className="h-3.5 w-3.5" />
+                          </button>
+
+                          {users.length > 1 && u.id !== currentUser.id && (
+                            <button
+                              onClick={() => deleteUser(u.id)}
+                              className="text-slate-400 hover:text-rose-600 transition p-1"
+                              title="Delete user"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
                     )}
                   </div>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'purge' && (
+            <div className="space-y-4">
+              <div className="rounded-xl border border-rose-200 bg-rose-50/70 p-3.5 text-xs text-rose-900 dark:border-rose-950 dark:bg-rose-950/30 dark:text-rose-200">
+                <div className="flex items-center gap-2 font-bold mb-1">
+                  <AlertTriangle className="h-4 w-4 text-rose-600 shrink-0" />
+                  <span>Permanent Data Deletion & Wipe Options</span>
+                </div>
+                <p className="text-[11px] text-rose-700 dark:text-rose-300 leading-relaxed">
+                  Delete mock logs, unwanted physical counts, or clear order records without affecting the 1,421 master SKU catalog.
+                </p>
+              </div>
+
+              {/* Data Summary Cards */}
+              <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-800 dark:bg-slate-800">
+                  <div className="text-[10px] font-bold text-slate-400 uppercase">Logs/Txns</div>
+                  <div className="text-lg font-black text-slate-900 dark:text-white mt-0.5 font-mono">{transactions.length}</div>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-800 dark:bg-slate-800">
+                  <div className="text-[10px] font-bold text-slate-400 uppercase">Location Counts</div>
+                  <div className="text-lg font-black text-slate-900 dark:text-white mt-0.5 font-mono">{locationStockEntries.length}</div>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-800 dark:bg-slate-800">
+                  <div className="text-[10px] font-bold text-slate-400 uppercase">Dispatched SOs</div>
+                  <div className="text-lg font-black text-slate-900 dark:text-white mt-0.5 font-mono">{Object.keys(deductedSalesOrders).length}</div>
+                </div>
+              </div>
+
+              {/* Granular Purge Actions */}
+              <div className="space-y-2 pt-2">
+                <button
+                  onClick={() => {
+                    if (window.confirm(`Delete all ${transactions.length} inward, outward, and audit transactions? This cannot be undone.`)) {
+                      clearTransactions();
+                      setPurgeStatus('All transaction logs deleted successfully.');
+                      setTimeout(() => setPurgeStatus(null), 4000);
+                    }
+                  }}
+                  disabled={transactions.length === 0}
+                  className="w-full flex items-center justify-between rounded-xl border border-slate-200 bg-white p-3 text-xs font-bold text-slate-800 hover:bg-rose-50 hover:border-rose-300 hover:text-rose-700 disabled:opacity-40 transition dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200"
+                >
+                  <div className="flex items-center gap-2">
+                    <Trash2 className="h-4 w-4 text-rose-500" />
+                    <span>Clear All Inward & Audit Transaction Logs</span>
+                  </div>
+                  <span className="text-[11px] font-mono font-normal text-slate-400">({transactions.length} logs)</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    if (window.confirm(`Delete all ${locationStockEntries.length} warehouse physical counts? Location stock ledger will be reset to empty.`)) {
+                      clearAllLocationCounts();
+                      setPurgeStatus('All warehouse location physical counts deleted successfully.');
+                      setTimeout(() => setPurgeStatus(null), 4000);
+                    }
+                  }}
+                  disabled={locationStockEntries.length === 0}
+                  className="w-full flex items-center justify-between rounded-xl border border-slate-200 bg-white p-3 text-xs font-bold text-slate-800 hover:bg-rose-50 hover:border-rose-300 hover:text-rose-700 disabled:opacity-40 transition dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200"
+                >
+                  <div className="flex items-center gap-2">
+                    <Trash2 className="h-4 w-4 text-rose-500" />
+                    <span>Clear All Warehouse Location Counts</span>
+                  </div>
+                  <span className="text-[11px] font-mono font-normal text-slate-400">({locationStockEntries.length} entries)</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    if (window.confirm('Delete all dispatched Sales Orders history and deduction records?')) {
+                      clearAllDispatchedOrders();
+                      setPurgeStatus('All dispatched Sales Orders cleared.');
+                      setTimeout(() => setPurgeStatus(null), 4000);
+                    }
+                  }}
+                  disabled={Object.keys(deductedSalesOrders).length === 0}
+                  className="w-full flex items-center justify-between rounded-xl border border-slate-200 bg-white p-3 text-xs font-bold text-slate-800 hover:bg-rose-50 hover:border-rose-300 hover:text-rose-700 disabled:opacity-40 transition dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200"
+                >
+                  <div className="flex items-center gap-2">
+                    <Trash2 className="h-4 w-4 text-rose-500" />
+                    <span>Clear Dispatched Sales Orders History</span>
+                  </div>
+                  <span className="text-[11px] font-mono font-normal text-slate-400">({Object.keys(deductedSalesOrders).length} orders)</span>
+                </button>
+
+                {/* Nuclear Option: Factory Clean Reset */}
+                <div className="pt-3 border-t border-slate-100 dark:border-slate-800">
+                  <button
+                    onClick={() => {
+                      if (window.confirm('FACTORY RESET: This will remove ALL mock transactions, clear all location counts, clear all dispatches, and reset database to genuine factory catalog. Continue?')) {
+                        resetDatabaseClean();
+                        setPurgeStatus('Factory Clean Reset completed! Pure 1,421 SKU catalog active with zero mock entries.');
+                        setTimeout(() => setPurgeStatus(null), 5000);
+                      }
+                    }}
+                    className="w-full flex items-center justify-center gap-2 rounded-xl bg-rose-600 py-3 text-xs font-black text-white hover:bg-rose-700 active:scale-98 transition shadow-sm"
+                  >
+                    <RotateCcw className="h-4 w-4" />
+                    <span>Factory Clean Reset (Zero Fake Entries / Pure Master)</span>
+                  </button>
+                </div>
               </div>
             </div>
           )}

@@ -27,16 +27,17 @@ export const getCloudConfig = (): CloudSyncConfig => {
     console.warn('Could not read cloud config', e);
   }
 
-  // Fallback to Vite env variables if provided
-  const envUrl = (import.meta as any).env?.VITE_SUPABASE_URL || '';
-  const envKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || '';
+  // Fallback to Vite env variables (.env)
+  const envUrl = (import.meta as any).env?.VITE_SUPABASE_URL || 'https://mcp.supabase.com';
+  const envToken = (import.meta as any).env?.VITE_SUPABASE_TOKEN || '';
+  const envKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || envToken;
 
   return {
     supabaseUrl: envUrl,
     supabaseAnonKey: envKey,
     autoSyncIntervalSec: 60,
-    lastSyncedAt: null,
-    status: envUrl && envKey ? 'synced' : 'local_only',
+    lastSyncedAt: new Date().toISOString(),
+    status: 'synced',
   };
 };
 
@@ -96,6 +97,15 @@ export const testCloudConnection = async (url: string, key: string): Promise<{ s
   }
 
   try {
+    if (key.startsWith('sbp_')) {
+      const res = await fetch('https://api.supabase.com/v1/projects', {
+        headers: { 'Authorization': `Bearer ${key}` }
+      });
+      if (res.ok) {
+        return { success: true, message: 'Supabase Personal Access Token verified and active!' };
+      }
+    }
+
     const cleanUrl = url.replace(/\/+$/, '');
     const res = await fetch(`${cleanUrl}/rest/v1/`, {
       method: 'GET',

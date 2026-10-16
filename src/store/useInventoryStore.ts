@@ -40,7 +40,7 @@ export interface DeductedSOInfo {
 export const defaultUsers: AppUser[] = [
   {
     id: 'user-admin',
-    name: 'S. Singh (Admin & Director)',
+    name: 'Admin',
     role: 'admin',
     pin: '1234',
     avatarColor: 'bg-orange-600',
@@ -56,7 +56,7 @@ export const defaultUsers: AppUser[] = [
   },
   {
     id: 'user-dispatch',
-    name: 'Rajesh Kumar (Dispatch Manager)',
+    name: 'Dispatch Manager',
     role: 'dispatch_manager',
     pin: '2222',
     avatarColor: 'bg-emerald-600',
@@ -72,7 +72,7 @@ export const defaultUsers: AppUser[] = [
   },
   {
     id: 'user-storekeeper',
-    name: 'P. Sharma (Inward Storekeeper)',
+    name: 'Inward Storekeeper',
     role: 'inward_storekeeper',
     pin: '3333',
     avatarColor: 'bg-indigo-600',
@@ -88,7 +88,7 @@ export const defaultUsers: AppUser[] = [
   },
   {
     id: 'user-count',
-    name: 'M. Verma (Godown Count Staff)',
+    name: 'Godown Count Staff',
     role: 'count_staff',
     pin: '4444',
     avatarColor: 'bg-amber-600',
@@ -203,9 +203,15 @@ interface InventoryStore {
 
   // Warehouse Location Operations
   addWarehouseLocation: (loc: WarehouseLocation | WarehouseLocation[]) => void;
+  updateWarehouseLocation: (oldCode: string, updated: Partial<WarehouseLocation>) => void;
+  deleteWarehouseLocation: (code: string) => void;
   saveLocationStockEntry: (entry: Omit<LocationStockEntry, 'id' | 'countedAt'>) => void;
   batchSaveLocationStockEntries: (entries: Array<Omit<LocationStockEntry, 'id' | 'countedAt'>>) => void;
+  deleteLocationStockEntry: (id: string) => void;
   clearLocationStockEntries: () => void;
+  deleteTransaction: (id: string) => void;
+  clearTransactions: () => void;
+  clearAllDeductedSalesOrders: () => void;
   setCountSession: (session: Partial<CountSession>) => void;
   applyOutwardReconciliation: (
     piNumber: string, 
@@ -218,6 +224,14 @@ interface InventoryStore {
     totalLiveUnits: number 
   };
   restoreFullDatabase: (backupData: any) => { success: boolean; message: string };
+
+  // User Management
+  setCurrentUser: (user: AppUser) => void;
+
+  // Complete Data Deletion & Purge Options
+  clearAllLocationCounts: () => void;
+  clearAllDispatchedOrders: () => void;
+  resetDatabaseClean: () => void;
 }
 
 export const computeStats = (skus: SkuItem[]): InventoryStats => {
@@ -251,11 +265,40 @@ const getInitialState = () => {
     if (saved) {
       const parsed = JSON.parse(saved);
       if (parsed.skus && parsed.skus.length >= 1421) {
+        // Strip any legacy dummy/fake transactions
+        const rawTxns = (parsed.transactions || []) as Transaction[];
+        const sanitizedTxns = rawTxns.filter((t: any) => 
+          !t.performed_by?.includes('Sharma') && 
+          !t.performed_by?.includes('Gupta') && 
+          !t.performed_by?.includes('Kohli') &&
+          !t.reason?.includes('Plant 1 Forging') &&
+          !t.reason?.includes('Container Import Clearance')
+        );
+
+        // Sanitize users: remove any legacy mock Indian names
+        const sanitizedUsers = (parsed.users && parsed.users.length > 0)
+          ? (parsed.users as AppUser[]).map(u => {
+              if (
+                u.name.includes('Singh') || 
+                u.name.includes('Rajesh') || 
+                u.name.includes('Sharma') || 
+                u.name.includes('Verma') || 
+                u.name === 'Administrator'
+              ) {
+                const matchingDefault = defaultUsers.find(d => d.role === u.role);
+                return matchingDefault ? { ...matchingDefault, pin: u.pin || matchingDefault.pin } : { ...u, name: u.role === 'admin' ? 'Admin' : u.role.replace('_', ' ') };
+              }
+              return u;
+            })
+          : defaultUsers;
+
+        const activeCurUser = sanitizedUsers.find(u => u.id === parsed.currentUser?.id) || sanitizedUsers[0] || defaultUsers[0];
+
         return {
           skus: parsed.skus as SkuItem[],
           categories: parsed.categories as CategoryGroup[],
           divisions: parsed.divisions as Record<DivisionCode, DivisionInfo>,
-          transactions: (parsed.transactions || []) as Transaction[],
+          transactions: sanitizedTxns,
           deductedSalesOrders: (parsed.deductedSalesOrders || {}) as Record<string, DeductedSOInfo>,
           warehouseLocations: (parsed.warehouseLocations && parsed.warehouseLocations.length > 0)
             ? parsed.warehouseLocations as WarehouseLocation[]
@@ -267,8 +310,8 @@ const getInitialState = () => {
             isActive: false,
             reconciledOrders: []
           }) as CountSession,
-          users: (parsed.users && parsed.users.length > 0) ? parsed.users as AppUser[] : defaultUsers,
-          currentUser: (parsed.currentUser && parsed.currentUser.role) ? parsed.currentUser as AppUser : defaultUsers[0]
+          users: sanitizedUsers,
+          currentUser: activeCurUser
         };
       }
     }
@@ -280,7 +323,7 @@ const getInitialState = () => {
     skus: initialSeedData.skus as unknown as SkuItem[],
     categories: initialSeedData.categories_hierarchy as CategoryGroup[],
     divisions: initialSeedData.divisions as Record<DivisionCode, DivisionInfo>,
-    transactions: initialSeedData.initial_transactions as Transaction[],
+    transactions: [] as Transaction[],
     deductedSalesOrders: {} as Record<string, DeductedSOInfo>,
     warehouseLocations: generateInitialWarehouseLocations(),
     locationStockEntries: [] as LocationStockEntry[],
@@ -885,7 +928,7 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
     const skus = initialSeedData.skus as unknown as SkuItem[];
     const categories = initialSeedData.categories_hierarchy as CategoryGroup[];
     const divisions = initialSeedData.divisions as Record<DivisionCode, DivisionInfo>;
-    const transactions = initialSeedData.initial_transactions as Transaction[];
+    const transactions: Transaction[] = [];
     const locations = generateInitialWarehouseLocations();
     
     const engine = new InventorySearchEngine(skus);
@@ -1396,10 +1439,65 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
     });
   },
 
+  updateWarehouseLocation: (oldCode, updated) => {
+    const state = get();
+    const newCode = updated.code ? normalizeLocationCode(updated.code) : oldCode;
+    const nextLocations = state.warehouseLocations.map(loc => {
+      if (loc.code === oldCode) {
+        return { ...loc, ...updated, code: newCode };
+      }
+      return loc;
+    });
+
+    // Also update any locationStockEntries that referenced oldCode
+    const nextEntries = state.locationStockEntries.map(e => {
+      if (e.locationCode === oldCode) {
+        return { ...e, locationCode: newCode };
+      }
+      return e;
+    });
+
+    set({ warehouseLocations: nextLocations, locationStockEntries: nextEntries });
+    saveStorage({ ...state, warehouseLocations: nextLocations, locationStockEntries: nextEntries });
+  },
+
+  deleteWarehouseLocation: (code) => {
+    const state = get();
+    const nextLocations = state.warehouseLocations.filter(loc => loc.code !== code);
+    set({ warehouseLocations: nextLocations });
+    saveStorage({ ...state, warehouseLocations: nextLocations });
+  },
+
+  deleteLocationStockEntry: (id) => {
+    const state = get();
+    const nextEntries = state.locationStockEntries.filter(e => e.id !== id);
+    set({ locationStockEntries: nextEntries });
+    saveStorage({ ...state, locationStockEntries: nextEntries });
+  },
+
   clearLocationStockEntries: () => {
     const state = get();
     set({ locationStockEntries: [] });
     saveStorage({ ...state, locationStockEntries: [] });
+  },
+
+  deleteTransaction: (id) => {
+    const state = get();
+    const nextTxns = state.transactions.filter(t => t.id !== id);
+    set({ transactions: nextTxns });
+    saveStorage({ ...state, transactions: nextTxns });
+  },
+
+  clearTransactions: () => {
+    const state = get();
+    set({ transactions: [] });
+    saveStorage({ ...state, transactions: [] });
+  },
+
+  clearAllDeductedSalesOrders: () => {
+    const state = get();
+    set({ deductedSalesOrders: {} });
+    saveStorage({ ...state, deductedSalesOrders: {} });
   },
 
   setCountSession: (sessionPartial) => {
@@ -1639,5 +1737,74 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
         message: `Restore failed: ${(err as Error).message}`
       };
     }
+  },
+
+  // User Management Implementations
+  setCurrentUser: (user: AppUser) => {
+    const state = get();
+    set({ currentUser: user });
+    saveStorage({ ...state, currentUser: user });
+  },
+
+  // Complete Data Deletion & Purge Options
+  clearAllLocationCounts: () => {
+    const state = get();
+    set({ locationStockEntries: [] });
+    saveStorage({ ...state, locationStockEntries: [] });
+  },
+
+  clearAllDispatchedOrders: () => {
+    const state = get();
+    set({ deductedSalesOrders: {} });
+    saveStorage({ ...state, deductedSalesOrders: {} });
+  },
+
+  resetDatabaseClean: () => {
+    const skus = initialSeedData.skus as unknown as SkuItem[];
+    const categories = initialSeedData.categories_hierarchy as CategoryGroup[];
+    const divisions = initialSeedData.divisions as Record<DivisionCode, DivisionInfo>;
+    const transactions: Transaction[] = [];
+    const deductedSalesOrders: Record<string, DeductedSOInfo> = {};
+    const warehouseLocations = generateInitialWarehouseLocations();
+    const locationStockEntries: LocationStockEntry[] = [];
+    const countSession: CountSession = {
+      startDate: new Date().toISOString().slice(0, 10),
+      endDate: new Date().toISOString().slice(0, 10),
+      isActive: false,
+      reconciledOrders: []
+    };
+    const users = defaultUsers;
+    const currentUser = defaultUsers[0];
+
+    const engine = new InventorySearchEngine(skus);
+    const stats = computeStats(skus);
+
+    set({
+      skus,
+      categories,
+      divisions,
+      transactions,
+      stats,
+      deductedSalesOrders,
+      warehouseLocations,
+      locationStockEntries,
+      countSession,
+      users,
+      currentUser,
+      searchEngine: engine
+    });
+
+    saveStorage({
+      skus,
+      categories,
+      divisions,
+      transactions,
+      deductedSalesOrders,
+      warehouseLocations,
+      locationStockEntries,
+      countSession,
+      users,
+      currentUser
+    });
   }
 }));

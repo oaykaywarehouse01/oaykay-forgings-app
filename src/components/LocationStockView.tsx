@@ -46,8 +46,11 @@ export const LocationStockView: React.FC = () => {
     currentUser,
     deductedSalesOrders,
     addWarehouseLocation, 
+    updateWarehouseLocation,
+    deleteWarehouseLocation,
     saveLocationStockEntry, 
     batchSaveLocationStockEntries,
+    deleteLocationStockEntry,
     clearLocationStockEntries,
     setCountSession,
     applyOutwardReconciliation,
@@ -65,18 +68,25 @@ export const LocationStockView: React.FC = () => {
 
   // Selected location for editing/drawer
   const [selectedLocation, setSelectedLocation] = useState<WarehouseLocation | null>(null);
+  const [isEditingLoc, setIsEditingLoc] = useState(false);
+  const [editLocCode, setEditLocCode] = useState('');
+  const [editLocDesc, setEditLocDesc] = useState('');
+
   const [selectedSkuForCount, setSelectedSkuForCount] = useState<SkuItem | null>(null);
   const [skuSearchQuery, setSkuSearchQuery] = useState('');
-  const [countedQtyInput, setCountedQtyInput] = useState<string>('50');
+  const [countedQtyInput, setCountedQtyInput] = useState<string>('');
   const [countNotes, setCountNotes] = useState<string>('');
 
   // Add Location Modal state
   const [isAddLocationModalOpen, setIsAddLocationModalOpen] = useState(false);
-  const [newLocType, setNewLocType] = useState<'RACK' | 'PALLET' | 'BIN'>('RACK');
+  const [newLocType, setNewLocType] = useState<'RACK' | 'PALLET' | 'BIN' | 'CUSTOM'>('CUSTOM');
   const [newLocCode, setNewLocCode] = useState('AA');
-  const [newLocCount, setNewLocCount] = useState<number>(3);
+  const [newLocCount, setNewLocCount] = useState<number>(6);
   const [newBinStart, setNewBinStart] = useState<number>(31);
   const [newBinEnd, setNewBinEnd] = useState<number>(50);
+  const [customLocCode, setCustomLocCode] = useState('');
+  const [customLocZone, setCustomLocZone] = useState('');
+  const [customLocDesc, setCustomLocDesc] = useState('');
 
   // Status & Notification messages
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -232,7 +242,23 @@ export const LocationStockView: React.FC = () => {
   // Add Location Modal submission
   const handleCreateNewLocations = (e: React.FormEvent) => {
     e.preventDefault();
-    if (newLocType === 'RACK') {
+    if (newLocType === 'CUSTOM') {
+      const norm = normalizeLocationCode(customLocCode);
+      if (!norm) {
+        showStatus('error', 'Please enter a valid location code (e.g. Pallet 7, Shed A, Floor 1).');
+        return;
+      }
+      addWarehouseLocation({
+        code: norm,
+        type: norm.startsWith('BIN') ? 'BIN' : (norm.match(/^[A-G]/) ? 'RACK' : 'PALLET'),
+        zone: customLocZone.trim() || 'Floor Storage',
+        description: customLocDesc.trim() || `Warehouse Location ${norm}`
+      });
+      showStatus('success', `Created custom warehouse location ${norm}.`);
+      setCustomLocCode('');
+      setCustomLocZone('');
+      setCustomLocDesc('');
+    } else if (newLocType === 'RACK') {
       const created = createNewSteelRackLocations(newLocCode, newLocCount);
       addWarehouseLocation(created);
       showStatus('success', `Created Rack ${newLocCode} with ${created.length} shelves (${created.map(l => l.code).join(', ')}).`);
@@ -632,15 +658,95 @@ export const LocationStockView: React.FC = () => {
             <div className="rounded-2xl border-2 border-orange-400 bg-white p-6 shadow-md dark:border-orange-600 dark:bg-slate-900 animate-in fade-in">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-200 dark:border-slate-800 gap-2">
                 <div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xl font-black text-slate-900 dark:text-white font-mono">
-                      Location {selectedLocation.code}
-                    </span>
-                    <span className="text-xs font-bold text-slate-500 uppercase">
-                      ({selectedLocation.description})
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-500 mt-0.5">
+                  {isEditingLoc ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-400 block mb-0.5">Location Code / Name:</label>
+                        <input
+                          type="text"
+                          value={editLocCode}
+                          onChange={(e) => setEditLocCode(e.target.value.toUpperCase())}
+                          className="rounded-lg border border-orange-400 bg-white px-2.5 py-1 text-sm font-mono font-black text-slate-900 dark:bg-slate-800 dark:text-white"
+                          placeholder="e.g. H7 or Pallet 7"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-400 block mb-0.5">Description:</label>
+                        <input
+                          type="text"
+                          value={editLocDesc}
+                          onChange={(e) => setEditLocDesc(e.target.value)}
+                          className="rounded-lg border border-orange-400 bg-white px-2.5 py-1 text-xs text-slate-900 dark:bg-slate-800 dark:text-white"
+                          placeholder="e.g. Floor Pallet 7"
+                        />
+                      </div>
+                      <div className="flex items-center gap-1.5 pt-4">
+                        <button
+                          onClick={() => {
+                            if (editLocCode.trim()) {
+                              const norm = normalizeLocationCode(editLocCode.trim());
+                              updateWarehouseLocation(selectedLocation.code, {
+                                code: norm,
+                                description: editLocDesc.trim() || undefined
+                              });
+                              setSelectedLocation({
+                                ...selectedLocation,
+                                code: norm,
+                                description: editLocDesc.trim() || selectedLocation.description
+                              });
+                              setIsEditingLoc(false);
+                              showStatus('success', `Renamed location to ${norm}.`);
+                            }
+                          }}
+                          className="rounded-lg bg-emerald-600 px-3 py-1 text-xs font-bold text-white hover:bg-emerald-700"
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => setIsEditingLoc(false)}
+                          className="rounded-lg bg-slate-200 px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-300 dark:bg-slate-700 dark:text-slate-300"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xl font-black text-slate-900 dark:text-white font-mono">
+                        Location {selectedLocation.code}
+                      </span>
+                      <span className="text-xs font-bold text-slate-500 uppercase">
+                        ({selectedLocation.description})
+                      </span>
+                      <button
+                        onClick={() => {
+                          setEditLocCode(selectedLocation.code);
+                          setEditLocDesc(selectedLocation.description || '');
+                          setIsEditingLoc(true);
+                        }}
+                        className="text-slate-400 hover:text-orange-600 transition p-1"
+                        title="Edit / Rename Location"
+                      >
+                        <Edit3 className="h-4 w-4" />
+                      </button>
+                      {currentUser.role === 'admin' && (
+                        <button
+                          onClick={() => {
+                            if (confirm(`Delete warehouse location ${selectedLocation.code}?`)) {
+                              deleteWarehouseLocation(selectedLocation.code);
+                              showStatus('success', `Deleted warehouse location ${selectedLocation.code}.`);
+                              setSelectedLocation(null);
+                            }
+                          }}
+                          className="text-slate-400 hover:text-rose-600 transition p-1"
+                          title="Delete Location"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  <p className="text-xs text-slate-500 mt-1">
                     Select any SKU from the 1,421 catalog below (or click + Add New SKU) to record the counted physical stock at this location.
                   </p>
                 </div>
@@ -998,6 +1104,7 @@ export const LocationStockView: React.FC = () => {
                     <th className="py-3 px-3 text-right">Counted Qty</th>
                     <th className="py-3 px-3">Counted By</th>
                     <th className="py-3 px-3">Notes</th>
+                    <th className="py-3 px-3 text-center">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -1026,6 +1133,20 @@ export const LocationStockView: React.FC = () => {
                       <td className="py-2.5 px-3 text-slate-400 truncate max-w-[200px]">
                         {e.notes || '—'}
                       </td>
+                      <td className="py-2.5 px-3 text-center">
+                        <button
+                          onClick={() => {
+                            if (confirm(`Delete counted entry for "${e.cleanName}" at ${e.locationCode}?`)) {
+                              deleteLocationStockEntry(e.id);
+                              showStatus('success', `Deleted count entry for ${e.skuCode} at ${e.locationCode}.`);
+                            }
+                          }}
+                          className="p-1 text-slate-400 hover:text-rose-600 transition"
+                          title="Delete this counted entry"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -1036,7 +1157,7 @@ export const LocationStockView: React.FC = () => {
       )}
 
       {/* ===================================================================== */}
-      {/* ADD NEW LOCATION MODAL (RACK / PALLET LINE / BINS)                    */}
+      {/* ADD NEW LOCATION MODAL (RACK / PALLET LINE / BINS / CUSTOM)            */}
       {/* ===================================================================== */}
       {isAddLocationModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in">
@@ -1046,7 +1167,7 @@ export const LocationStockView: React.FC = () => {
               <span>+ Add New Warehouse Location</span>
             </h3>
             <p className="text-xs text-slate-500 mt-0.5">
-              Expand warehouse capacity with new Steel Racks, Pallet Lines, or Storage Bins.
+              Expand warehouse capacity with custom locations, pallets, racks, or bins.
             </p>
 
             <form onSubmit={handleCreateNewLocations} className="mt-5 space-y-4">
@@ -1054,17 +1175,18 @@ export const LocationStockView: React.FC = () => {
                 <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
                   Location Type:
                 </label>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-4 gap-1.5">
                   {[
-                    { id: 'RACK', label: 'Steel Rack' },
+                    { id: 'CUSTOM', label: 'Custom (Any)' },
                     { id: 'PALLET', label: 'Pallet Line' },
-                    { id: 'BIN', label: 'Storage Bins' },
+                    { id: 'RACK', label: 'Steel Rack' },
+                    { id: 'BIN', label: 'Bins' },
                   ].map(t => (
                     <button
                       type="button"
                       key={t.id}
                       onClick={() => setNewLocType(t.id as any)}
-                      className={`p-2.5 rounded-xl border text-xs font-bold transition ${
+                      className={`py-2 px-1 text-center rounded-xl border text-[11px] font-bold transition ${
                         newLocType === t.id
                           ? 'border-orange-500 bg-orange-50 text-orange-800 dark:bg-orange-950 dark:text-orange-200'
                           : 'border-slate-200 bg-white text-slate-600 dark:border-slate-700 dark:bg-slate-800'
@@ -1076,67 +1198,50 @@ export const LocationStockView: React.FC = () => {
                 </div>
               </div>
 
-              {newLocType === 'RACK' && (
-                <div className="grid grid-cols-2 gap-3">
+              {newLocType === 'CUSTOM' && (
+                <div className="space-y-3">
                   <div>
                     <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                      Rack Letter/Code:
+                      Custom Location Name / Code: <span className="text-rose-500">*</span>
                     </label>
                     <input
                       type="text"
-                      value={newLocCode}
-                      onChange={(e) => setNewLocCode(e.target.value.toUpperCase())}
-                      placeholder="e.g. AA or G"
-                      className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-mono font-bold dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                      value={customLocCode}
+                      onChange={(e) => setCustomLocCode(e.target.value)}
+                      placeholder="e.g. Pallet 7, Shed A, Floor 1, QC Bay"
+                      className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold dark:bg-slate-800 dark:border-slate-700 dark:text-white"
                       required
                     />
                   </div>
-                  <div>
-                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                      Shelves (Default 3):
-                    </label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={6}
-                      value={newLocCount}
-                      onChange={(e) => setNewLocCount(parseInt(e.target.value, 10) || 3)}
-                      className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-mono font-bold dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                    />
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                        Zone / Area:
+                      </label>
+                      <input
+                        type="text"
+                        value={customLocZone}
+                        onChange={(e) => setCustomLocZone(e.target.value)}
+                        placeholder="e.g. Main Godown Floor"
+                        className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                        Description:
+                      </label>
+                      <input
+                        type="text"
+                        value={customLocDesc}
+                        onChange={(e) => setCustomLocDesc(e.target.value)}
+                        placeholder="e.g. Heavy Duty Pallet"
+                        className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                      />
+                    </div>
                   </div>
                 </div>
               )}
 
-              {newLocType === 'PALLET' && (
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                      Line Letter/Code:
-                    </label>
-                    <input
-                      type="text"
-                      value={newLocCode}
-                      onChange={(e) => setNewLocCode(e.target.value.toUpperCase())}
-                      placeholder="e.g. Q or R"
-                      className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-mono font-bold dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                      Pallets Count (Default 6):
-                    </label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={12}
-                      value={newLocCount}
-                      onChange={(e) => setNewLocCount(parseInt(e.target.value, 10) || 6)}
-                      className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-mono font-bold dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                    />
-                  </div>
-                </div>
-              )}
 
               {newLocType === 'BIN' && (
                 <div className="grid grid-cols-2 gap-3">

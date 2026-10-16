@@ -16,7 +16,8 @@ import {
   FileText,
   PackagePlus,
   ShieldAlert,
-  Calendar
+  Calendar,
+  Trash2
 } from 'lucide-react';
 import { useInventoryStore } from '../store/useInventoryStore';
 import { SkuItem, TransactionType, DivisionCode, Transaction } from '../types/inventory';
@@ -30,6 +31,8 @@ export const StockEntryView: React.FC = () => {
     warehouseLocations,
     currentUser,
     recordTransaction, 
+    deleteTransaction,
+    clearTransactions,
     searchEngine,
     setAddNewSkuModalOpen,
     setSelectedSku 
@@ -38,10 +41,10 @@ export const StockEntryView: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeSku, setActiveSku] = useState<SkuItem | null>(skus[0] || null);
   const [txnType, setTxnType] = useState<TransactionType>('STOCK_IN');
-  const [quantityInput, setQuantityInput] = useState<string>('50');
-  const [selectedLocation, setSelectedLocation] = useState<string>('A1');
-  const [referenceNo, setReferenceNo] = useState<string>('PB-402');
-  const [notes, setNotes] = useState<string>('Received from heat treatment unit, inspected and accepted.');
+  const [quantityInput, setQuantityInput] = useState<string>('');
+  const [selectedLocation, setSelectedLocation] = useState<string>(warehouseLocations[0]?.code || 'A1');
+  const [referenceNo, setReferenceNo] = useState<string>('');
+  const [notes, setNotes] = useState<string>('');
   const [operator, setOperator] = useState<string>(currentUser.name);
   const [successToast, setSuccessToast] = useState<string | null>(null);
 
@@ -415,13 +418,30 @@ export const StockEntryView: React.FC = () => {
             <p className="text-xs text-slate-500">Real-time ledger with inward remarks, bill references, and location traces.</p>
           </div>
 
-          <button
-            onClick={handleExportLogsExcel}
-            className="flex items-center gap-1.5 rounded-xl border border-slate-300 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-200 transition"
-          >
-            <Download className="h-3.5 w-3.5 text-emerald-600" />
-            <span>Export Inward Logs (.xlsx)</span>
-          </button>
+          <div className="flex items-center gap-2">
+            {transactions.length > 0 && (
+              <button
+                onClick={() => {
+                  if (confirm('Are you sure you want to clear all transaction audit logs? This cannot be undone.')) {
+                    clearTransactions();
+                  }
+                }}
+                className="flex items-center gap-1.5 rounded-xl border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-100 dark:bg-rose-950 dark:border-rose-900 dark:text-rose-300 transition"
+                title="Wipe transaction logs"
+              >
+                <Trash2 className="h-3.5 w-3.5 text-rose-600" />
+                <span>Clear All Logs</span>
+              </button>
+            )}
+
+            <button
+              onClick={handleExportLogsExcel}
+              className="flex items-center gap-1.5 rounded-xl border border-slate-300 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-200 transition"
+            >
+              <Download className="h-3.5 w-3.5 text-emerald-600" />
+              <span>Export Inward Logs (.xlsx)</span>
+            </button>
+          </div>
         </div>
 
         {/* Filters Bar */}
@@ -487,6 +507,7 @@ export const StockEntryView: React.FC = () => {
                 <th className="py-2.5 px-3 text-center">Location</th>
                 <th className="py-2.5 px-4">Inward Notes / Reference</th>
                 <th className="py-2.5 px-3">Operator</th>
+                <th className="py-2.5 px-2 text-center">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-mono">
@@ -540,6 +561,19 @@ export const StockEntryView: React.FC = () => {
                     </td>
                     <td className="py-2 px-3 text-slate-500 font-sans text-[11px] truncate max-w-[120px]">
                       {txn.performed_by}
+                    </td>
+                    <td className="py-2 px-2 text-center">
+                      <button
+                        onClick={() => {
+                          if (confirm(`Delete this log entry for ${txn.sku_name} (${txn.sku_code})?`)) {
+                            deleteTransaction(txn.id);
+                          }
+                        }}
+                        className="p-1 text-slate-400 hover:text-rose-600 transition"
+                        title="Delete this record"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
                     </td>
                   </tr>
                 );
