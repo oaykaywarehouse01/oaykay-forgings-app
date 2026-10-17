@@ -21,7 +21,7 @@ import {
 } from 'lucide-react';
 import { useInventoryStore } from '../store/useInventoryStore';
 import { SkuItem, TransactionType, DivisionCode, Transaction } from '../types/inventory';
-import { normalizeLocationCode } from '../lib/locationUtils';
+import { normalizeLocationCode, isMockLocationCode } from '../lib/locationUtils';
 import * as XLSX from 'xlsx';
 
 export const StockEntryView: React.FC = () => {
@@ -135,7 +135,7 @@ export const StockEntryView: React.FC = () => {
       'Quantity': l.quantity,
       'Previous Stock': l.prev_stock,
       'New Stock': l.new_stock,
-      'Storage Location': l.location || 'N/A',
+      'Storage Location': l.location && !isMockLocationCode(l.location) ? l.location : 'N/A',
       'Reference / Bill No': l.referenceNo || 'N/A',
       'Inward Notes': l.notes || l.reason,
       'Operator': l.performed_by

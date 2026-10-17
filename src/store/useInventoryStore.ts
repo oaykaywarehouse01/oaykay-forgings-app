@@ -1024,7 +1024,7 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
       'Stock Quantity': s.current_stock,
       'Unit': s.unit,
       'Stock Status': s.status,
-      'Bin Location': s.location_bin,
+      'Bin Location': s.location_bin && !isMockLocationCode(s.location_bin) ? s.location_bin : '',
       'Original Tally Name': s.original_tally_name
     }));
 
