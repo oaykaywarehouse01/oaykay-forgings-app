@@ -66,17 +66,21 @@ export const App: React.FC = () => {
   }
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 antialiased selection:bg-orange-500 selection:text-white">
+    <div className="flex h-screen w-screen overflow-hidden bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 antialiased selection:bg-orange-500 selection:text-white print:h-auto print:w-full print:overflow-visible">
       {/* Collapsible Left Sidebar / Mobile Overlay Drawer */}
-      <Sidebar />
+      <div className="no-print">
+        <Sidebar />
+      </div>
 
       {/* Main Content Area */}
-      <div className="flex flex-1 flex-col overflow-hidden">
+      <div className="flex flex-1 flex-col overflow-hidden print:overflow-visible print:h-auto print:w-full">
         {/* Sticky Top Header */}
-        <Header />
+        <div className="no-print">
+          <Header />
+        </div>
 
         {/* Dynamic Viewport (with pb-20 on mobile so bottom nav never overlaps content) */}
-        <main className="flex-1 overflow-y-auto pb-20 md:pb-6">
+        <main className="flex-1 overflow-y-auto pb-20 md:pb-6 print:overflow-visible print:h-auto print:w-full print:p-0 print:pb-0">
           {activeModule === 'stock-master' && <StockMasterView />}
           {activeModule === 'sales-dispatch' && <SalesDispatchView />}
           {activeModule === 'location-stock' && <LocationStockView />}
@@ -89,17 +93,21 @@ export const App: React.FC = () => {
       </div>
 
       {/* Mobile Native-Style Bottom Navigation Bar */}
-      <MobileBottomNav />
+      <div className="no-print">
+        <MobileBottomNav />
+      </div>
 
       {/* Modals & Slide-Over Drawers */}
-      <CommandPalette />
-      <SkuInspectorDrawer />
-      <StockTransactionModal />
-      <UpdateWriteOffModal />
-      <KeyboardShortcutsModal />
-      <AddNewSkuModal />
-      <UserManagementModal />
-      <CloudSyncModal />
+      <div className="no-print">
+        <CommandPalette />
+        <SkuInspectorDrawer />
+        <StockTransactionModal />
+        <UpdateWriteOffModal />
+        <KeyboardShortcutsModal />
+        <AddNewSkuModal />
+        <UserManagementModal />
+        <CloudSyncModal />
+      </div>
     </div>
   );
 };

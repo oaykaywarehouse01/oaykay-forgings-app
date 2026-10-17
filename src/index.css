@@ -104,23 +104,93 @@ mark.highlight {
 @media print {
   @page {
     margin: 8mm;
-    size: auto;
+    size: A4 portrait;
   }
-  body {
+
+  html, body, #root {
     background: #ffffff !important;
     color: #000000 !important;
-    font-size: 11pt;
+    font-size: 10pt;
+    height: auto !important;
+    min-height: 100% !important;
+    width: 100% !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
   }
-  .no-print {
+
+  /* Unlock all scroll/hidden containers for seamless multi-page print */
+  .h-screen, .w-screen, .overflow-hidden, .overflow-y-auto {
+    height: auto !important;
+    width: auto !important;
+    overflow: visible !important;
+    position: static !important;
+  }
+
+  .no-print,
+  aside,
+  header,
+  nav,
+  .sidebar,
+  .mobile-bottom-nav {
     display: none !important;
   }
-  .print-page-break {
-    page-break-inside: avoid;
-    break-inside: avoid;
+
+  /* Exactly 2 Box Labels Per Page Print Layout */
+  .print-page-2labels {
+    height: 278mm !important;
+    max-height: 278mm !important;
+    min-height: 278mm !important;
+    box-sizing: border-box !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: flex-start !important;
+    gap: 8mm !important;
+    page-break-after: always !important;
+    break-after: page !important;
+    overflow: hidden !important;
+    margin: 0 !important;
+    padding: 0 !important;
   }
-  .print-grid-2cols {
-    display: grid !important;
-    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-    gap: 12px !important;
+
+  .print-page-2labels:last-child {
+    page-break-after: auto !important;
+    break-after: auto !important;
+  }
+
+  .shipping-carton-label {
+    height: 134mm !important;
+    max-height: 134mm !important;
+    min-height: 134mm !important;
+    box-sizing: border-box !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    border: 2px solid #000000 !important;
+    border-radius: 8px !important;
+    padding: 10px 14px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: space-between !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    overflow: hidden !important;
+  }
+
+  /* Text & inputs in printed labels */
+  .shipping-carton-label input {
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    color: #000000 !important;
+    font-weight: 800 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .print-page-break {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
   }
 }
+

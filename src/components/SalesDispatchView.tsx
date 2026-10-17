@@ -758,9 +758,43 @@ export const SalesDispatchView: React.FC = () => {
     setCustomCartons(list);
   };
 
+  // Group cartons into pages of exactly 2 labels per A4 page for printing
+  const cartonPages = useMemo(() => {
+    if (!activeSummary?.cartons) return [];
+    const list = activeSummary.cartons;
+    const pages: Array<{
+      pageIndex: number;
+      cartons: Array<{ carton: typeof activeSummary.cartons[0]; originalIndex: number }>;
+    }> = [];
+
+    for (let i = 0; i < list.length; i += 2) {
+      const pageCartons = [];
+      if (list[i]) pageCartons.push({ carton: list[i], originalIndex: i });
+      if (list[i + 1]) pageCartons.push({ carton: list[i + 1], originalIndex: i + 1 });
+      pages.push({
+        pageIndex: Math.floor(i / 2),
+        cartons: pageCartons,
+      });
+    }
+    return pages;
+  }, [activeSummary?.cartons]);
+
   // Print handlers
-  const handlePrint = () => {
-    window.print();
+  const handlePrintLabels = (all = true) => {
+    setOutputTab('box-labels');
+    if (all) {
+      setLabelViewMode('all-grid');
+    }
+    setTimeout(() => {
+      window.print();
+    }, 150);
+  };
+
+  const handlePrintPackingList = () => {
+    setOutputTab('packing-list');
+    setTimeout(() => {
+      window.print();
+    }, 150);
   };
 
   // 1-Click Excel Downloads
@@ -893,7 +927,7 @@ export const SalesDispatchView: React.FC = () => {
       {/* EMPTY STATE: WHEN NO SALES ORDER IS LOADED YET                            */}
       {/* ========================================================================= */}
       {!soData && (
-        <div className="space-y-6 animate-in fade-in duration-200">
+        <div className="space-y-6 animate-in fade-in duration-200 no-print">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3 border-b border-slate-200 dark:border-slate-800">
             <div>
               <div className="flex items-center gap-2 text-xs font-extrabold text-orange-600 uppercase tracking-wider">
@@ -1035,12 +1069,12 @@ export const SalesDispatchView: React.FC = () => {
       {/* ACTIVE SALES ORDER WORKSPACE                                              */}
       {/* ========================================================================= */}
       {soData && (
-        <div className="space-y-5">
+        <div className="space-y-5 print:space-y-0">
           
           {/* --------------------------------------------------------------------- */}
           {/* SECTION A: ORDER HEADER BAR                                           */}
           {/* --------------------------------------------------------------------- */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-3.5 sm:p-4 shadow-xs dark:border-slate-800 dark:bg-slate-900">
+          <div className="rounded-2xl border border-slate-200 bg-white p-3.5 sm:p-4 shadow-xs dark:border-slate-800 dark:bg-slate-900 no-print">
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
               {/* Left Details: PI #, Date, Party, State, Shipping Mark */}
               <div className="flex flex-wrap items-center gap-3 min-w-0">
@@ -1147,7 +1181,7 @@ export const SalesDispatchView: React.FC = () => {
           {/* --------------------------------------------------------------------- */}
           <div 
             ref={boxBuilderRef}
-            className="rounded-2xl border-2 border-orange-400/90 bg-gradient-to-br from-orange-50/90 via-white to-amber-50/60 p-4 sm:p-5 shadow-sm dark:border-orange-700 dark:from-slate-900 dark:via-slate-900 dark:to-orange-950/30"
+            className="rounded-2xl border-2 border-orange-400/90 bg-gradient-to-br from-orange-50/90 via-white to-amber-50/60 p-4 sm:p-5 shadow-sm dark:border-orange-700 dark:from-slate-900 dark:via-slate-900 dark:to-orange-950/30 no-print"
           >
             <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-orange-200 dark:border-orange-800/60 gap-2">
               <div className="flex items-center gap-2.5">
@@ -1677,9 +1711,9 @@ export const SalesDispatchView: React.FC = () => {
           {/* SECTION D: EDITABLE PACKING LIST TABLE & BOX STICKERS                 */}
           {/* --------------------------------------------------------------------- */}
           {activeSummary && (
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 shadow-xs dark:border-slate-800 dark:bg-slate-900 space-y-4">
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 shadow-xs dark:border-slate-800 dark:bg-slate-900 space-y-4 print:border-none print:shadow-none print:p-0 print:m-0 print:bg-transparent">
               
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800 gap-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800 gap-3 no-print">
                 {/* Switcher: Packing List Table vs Box Stickers */}
                 <div className="flex items-center gap-2 no-print">
                   <button
@@ -1745,12 +1779,18 @@ export const SalesDispatchView: React.FC = () => {
 
                   <button
                     type="button"
-                    onClick={handlePrint}
-                    className="flex items-center gap-1.5 rounded-xl bg-slate-900 text-white hover:bg-black dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white px-3.5 py-1.5 text-xs font-black shadow-xs transition active:scale-95"
-                    title="Print directly or save as PDF"
+                    onClick={() => {
+                      if (outputTab === 'box-labels') {
+                        handlePrintLabels(true);
+                      } else {
+                        handlePrintPackingList();
+                      }
+                    }}
+                    className="flex items-center gap-1.5 rounded-xl bg-slate-900 text-white hover:bg-black dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white px-3.5 py-1.5 text-xs font-black shadow-xs transition active:scale-95 no-print cursor-pointer"
+                    title={outputTab === 'box-labels' ? "Print box stickers (2 per page)" : "Print packing list table"}
                   >
                     <Printer className="h-3.5 w-3.5" />
-                    <span>Print</span>
+                    <span>{outputTab === 'box-labels' ? 'Print Labels (2/Page)' : 'Print Packing List'}</span>
                   </button>
                 </div>
               </div>
@@ -1956,7 +1996,51 @@ export const SalesDispatchView: React.FC = () => {
 
               {/* VIEW 2: BOX LABELS / STICKERS */}
               {outputTab === 'box-labels' && (
-                <div className="space-y-4">
+                <div className="space-y-4 print:space-y-0">
+                  {/* Dedicated A4 Print Banner with 2-labels-per-page guidance & button */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 bg-orange-50/80 dark:bg-orange-950/40 rounded-2xl border border-orange-200 dark:border-orange-900/60 no-print">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2 rounded-xl bg-orange-600 text-white shadow-2xs">
+                        <Tag className="h-4 w-4" />
+                      </div>
+                      <div>
+                        <div className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-2">
+                          <span>A4 Box Labels Print Layout</span>
+                          <span className="rounded-md bg-orange-200 text-orange-900 dark:bg-orange-900 dark:text-orange-200 px-2 py-0.5 text-[10px] font-bold">
+                            2 Labels Per Page
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-slate-600 dark:text-slate-400">
+                          {activeSummary.totalBoxes} Labels • Formatted for standard A4 paper ({Math.ceil(activeSummary.totalBoxes / 2)} Pages)
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {labelViewMode === 'single-carousel' && (
+                        <button
+                          type="button"
+                          onClick={() => handlePrintLabels(false)}
+                          className="flex items-center gap-1.5 rounded-xl border border-orange-300 bg-white hover:bg-orange-50 text-orange-900 px-3.5 py-1.5 text-xs font-black shadow-2xs transition active:scale-95 dark:bg-slate-900 dark:text-orange-200 dark:border-orange-800"
+                          title="Print only this single box sticker"
+                        >
+                          <Printer className="h-3.5 w-3.5" />
+                          <span>Print This Label</span>
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => handlePrintLabels(true)}
+                        className="flex items-center gap-1.5 rounded-xl bg-orange-600 hover:bg-orange-700 text-white px-3.5 py-1.5 text-xs font-black shadow-xs transition active:scale-95 cursor-pointer"
+                        title="Print all carton stickers formatted 2 per A4 sheet"
+                      >
+                        <Printer className="h-3.5 w-3.5" />
+                        <span>Print All Labels (2 Per Page)</span>
+                      </button>
+                    </div>
+                  </div>
+
                   {/* Single vs All Switcher */}
                   <div className="flex items-center justify-between bg-slate-50 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 dark:bg-slate-800/60 no-print">
                     <div className="flex items-center gap-1.5">
@@ -2009,126 +2093,265 @@ export const SalesDispatchView: React.FC = () => {
                     )}
                   </div>
 
-                  {/* Stickers Grid */}
-                  <div className={labelViewMode === 'all-grid' ? 'grid grid-cols-1 md:grid-cols-2 gap-4 print-grid-2cols' : 'max-w-xl mx-auto'}>
-                    {(labelViewMode === 'all-grid' ? activeSummary.cartons : [activeSummary.cartons[currentCartonIndex]]).map((carton, cartonIdx) => {
-                      if (!carton) return null;
-                      const realCartonIdx = labelViewMode === 'all-grid' ? cartonIdx : currentCartonIndex;
-                      const isPromoBox = carton.items.some(it => it.isPromoOrNonStock);
-
-                      return (
+                  {/* Stickers Output: In print, organized into 2 labels per page */}
+                  {labelViewMode === 'all-grid' ? (
+                    <div className="space-y-4 print:space-y-0">
+                      {cartonPages.map((pageGroup) => (
                         <div
-                          key={carton.id || `carton-label-${carton.cartonNo}`}
-                          className={`rounded-2xl border-3 bg-white p-4 shadow-sm dark:bg-slate-900 font-sans print-page-break relative ${
-                            isPromoBox ? 'border-purple-600 dark:border-purple-400' : 'border-slate-900 dark:border-slate-200'
-                          }`}
+                          key={`label-page-${pageGroup.pageIndex}`}
+                          className="grid grid-cols-1 md:grid-cols-2 gap-4 print:print-page-2labels print:grid-cols-1 print:gap-2"
                         >
-                          {/* Header Block: Carton# | Shipping Mark | PI# */}
-                          <div className="grid grid-cols-3 border-b-2 border-slate-900 pb-2.5 dark:border-slate-200 font-mono">
-                            <div>
-                              <div className="text-[10px] font-bold text-slate-500 uppercase">Carton#</div>
-                              <input
-                                type="number"
-                                min={1}
-                                value={carton.cartonNo}
-                                onChange={(e) => handleUpdateCartonField(realCartonIdx, 'cartonNo', e.target.value)}
-                                className="text-xl font-black text-slate-900 dark:text-white mt-0.5 w-18 bg-transparent border-b border-dashed border-slate-300 focus:outline-none"
-                              />
-                            </div>
+                          {pageGroup.cartons.map(({ carton, originalIndex }) => {
+                            const isPromoBox = carton.items.some(it => it.isPromoOrNonStock);
+                            return (
+                              <div
+                                key={carton.id || `carton-label-${carton.cartonNo}`}
+                                className={`shipping-carton-label rounded-2xl border-2 sm:border-3 bg-white p-3.5 sm:p-4 shadow-sm dark:bg-slate-900 font-sans relative ${
+                                  isPromoBox ? 'border-purple-600 dark:border-purple-400' : 'border-slate-900 dark:border-slate-200'
+                                }`}
+                              >
+                                {/* Header Block: Carton# | Shipping Mark | PI# */}
+                                <div className="grid grid-cols-3 border-b-2 border-slate-900 pb-2 dark:border-slate-200 font-mono">
+                                  <div>
+                                    <div className="text-[10px] font-bold text-slate-500 uppercase">Carton#</div>
+                                    <input
+                                      type="number"
+                                      min={1}
+                                      value={carton.cartonNo}
+                                      onChange={(e) => handleUpdateCartonField(originalIndex, 'cartonNo', e.target.value)}
+                                      className="text-lg sm:text-xl font-black text-slate-900 dark:text-white mt-0.5 w-20 bg-transparent border-b border-dashed border-slate-300 focus:outline-none print:border-none print:text-black"
+                                    />
+                                  </div>
 
-                            <div className="text-center">
-                              <div className="text-[10px] font-bold text-slate-500 uppercase">Shipping Mark</div>
-                              <input
-                                type="text"
-                                value={carton.shippingMark}
-                                onChange={(e) => handleUpdateCartonField(realCartonIdx, 'shippingMark', e.target.value)}
-                                className="text-sm font-black text-orange-700 dark:text-orange-400 mt-0.5 text-center w-full bg-transparent border-b border-dashed border-orange-300 focus:outline-none uppercase"
-                              />
-                            </div>
+                                  <div className="text-center">
+                                    <div className="text-[10px] font-bold text-slate-500 uppercase">Shipping Mark</div>
+                                    <input
+                                      type="text"
+                                      value={carton.shippingMark}
+                                      onChange={(e) => handleUpdateCartonField(originalIndex, 'shippingMark', e.target.value)}
+                                      className="text-xs sm:text-sm font-black text-orange-700 dark:text-orange-400 mt-0.5 text-center w-full bg-transparent border-b border-dashed border-orange-300 focus:outline-none uppercase print:border-none print:text-black"
+                                    />
+                                  </div>
 
-                            <div className="text-right">
-                              <div className="text-[10px] font-bold text-slate-500 uppercase">PI#</div>
-                              <input
-                                type="text"
-                                value={carton.piNumber}
-                                onChange={(e) => handleUpdateCartonField(realCartonIdx, 'piNumber', e.target.value)}
-                                className="text-xl font-black text-slate-900 dark:text-white mt-0.5 text-right w-18 bg-transparent border-b border-dashed border-slate-300 focus:outline-none ml-auto block"
-                              />
-                            </div>
-                          </div>
+                                  <div className="text-right">
+                                    <div className="text-[10px] font-bold text-slate-500 uppercase">PI#</div>
+                                    <input
+                                      type="text"
+                                      value={carton.piNumber}
+                                      onChange={(e) => handleUpdateCartonField(originalIndex, 'piNumber', e.target.value)}
+                                      className="text-lg sm:text-xl font-black text-slate-900 dark:text-white mt-0.5 text-right w-20 bg-transparent border-b border-dashed border-slate-300 focus:outline-none ml-auto block print:border-none print:text-black"
+                                    />
+                                  </div>
+                                </div>
 
-                          {/* Table Block: S# | Product/Size | Quantity (Nos) | Weight (Kg) */}
-                          <div className="mt-2.5">
-                            <table className="w-full table-fixed border-collapse text-left font-mono">
-                              <thead>
-                                <tr className="border-b border-slate-300 text-[10px] font-black text-slate-700 uppercase dark:border-slate-700 dark:text-slate-300">
-                                  <th className="w-[10%] py-1.5 px-1 text-center">S#</th>
-                                  <th className="w-[50%] py-1.5 px-2">Product/Size</th>
-                                  <th className="w-[20%] py-1.5 px-1 text-right">Quantity (Nos)</th>
-                                  <th className="w-[20%] py-1.5 px-2 text-right">Weight (Kg)</th>
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y divide-slate-200 dark:divide-slate-800 text-xs">
-                                {carton.items.map((item, idx) => (
-                                  <tr key={idx}>
-                                    <td className="py-1.5 px-1 text-center font-bold text-slate-500">
-                                      {idx + 1}
-                                    </td>
-                                    <td className="py-1.5 px-2 font-black text-slate-900 dark:text-white whitespace-normal break-words leading-tight">
-                                      <input
-                                        type="text"
-                                        value={item.cleanName}
-                                        onChange={(e) => handleUpdateCartonItemField(realCartonIdx, idx, 'cleanName', e.target.value)}
-                                        className="w-full bg-transparent border-b border-transparent hover:border-slate-300 focus:border-orange-500 focus:outline-none uppercase font-black"
-                                      />
-                                    </td>
-                                    <td className="py-1.5 px-1 text-right font-black text-slate-900 dark:text-white tabular-nums">
-                                      <input
-                                        type="number"
-                                        min={0}
-                                        value={item.qty}
-                                        onChange={(e) => handleUpdateCartonItemField(realCartonIdx, idx, 'qty', e.target.value)}
-                                        className="w-16 text-right bg-transparent border-b border-transparent hover:border-slate-300 focus:border-orange-500 focus:outline-none font-black tabular-nums ml-auto block"
-                                      />
-                                    </td>
-                                    <td className="py-1.5 px-2 text-right font-bold text-slate-900 dark:text-white tabular-nums">
-                                      <input
-                                        type="number"
-                                        step={0.01}
-                                        min={0}
-                                        value={carton.items.length === 1 ? carton.grossWeightKg : item.weightKg}
-                                        onChange={(e) => {
-                                          if (carton.items.length === 1) {
-                                            handleUpdateCartonField(realCartonIdx, 'grossWeightKg', e.target.value);
-                                          } else {
-                                            handleUpdateCartonItemField(realCartonIdx, idx, 'weightKg', e.target.value);
-                                          }
-                                        }}
-                                        className="w-18 text-right bg-transparent border-b border-transparent hover:border-slate-300 focus:border-orange-500 focus:outline-none font-bold tabular-nums ml-auto block"
-                                      />
-                                    </td>
-                                  </tr>
-                                ))}
+                                {/* Table Block: S# | Product/Size | Quantity (Nos) | Weight (Kg) */}
+                                <div className="mt-2 flex-1">
+                                  <table className="w-full table-fixed border-collapse text-left font-mono">
+                                    <thead>
+                                      <tr className="border-b border-slate-300 text-[10px] font-black text-slate-700 uppercase dark:border-slate-700 dark:text-slate-300 print:text-black">
+                                        <th className="w-[10%] py-1.5 px-1 text-center">S#</th>
+                                        <th className="w-[50%] py-1.5 px-2">Product/Size</th>
+                                        <th className="w-[20%] py-1.5 px-1 text-right">Quantity (Nos)</th>
+                                        <th className="w-[20%] py-1.5 px-2 text-right">Weight (Kg)</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-200 dark:divide-slate-800 text-xs">
+                                      {carton.items.map((item, idx) => (
+                                        <tr key={idx}>
+                                          <td className="py-1 px-1 text-center font-bold text-slate-500 print:text-black">
+                                            {idx + 1}
+                                          </td>
+                                          <td className="py-1 px-2 font-black text-slate-900 dark:text-white whitespace-normal break-words leading-tight print:text-black">
+                                            <input
+                                              type="text"
+                                              value={item.cleanName}
+                                              onChange={(e) => handleUpdateCartonItemField(originalIndex, idx, 'cleanName', e.target.value)}
+                                              className="w-full bg-transparent border-b border-transparent hover:border-slate-300 focus:border-orange-500 focus:outline-none uppercase font-black print:border-none print:text-black"
+                                            />
+                                          </td>
+                                          <td className="py-1 px-1 text-right font-black text-slate-900 dark:text-white tabular-nums print:text-black">
+                                            <input
+                                              type="number"
+                                              min={0}
+                                              value={item.qty}
+                                              onChange={(e) => handleUpdateCartonItemField(originalIndex, idx, 'qty', e.target.value)}
+                                              className="w-16 text-right bg-transparent border-b border-transparent hover:border-slate-300 focus:border-orange-500 focus:outline-none font-black tabular-nums ml-auto block print:border-none print:text-black"
+                                            />
+                                          </td>
+                                          <td className="py-1 px-2 text-right font-bold text-slate-900 dark:text-white tabular-nums print:text-black">
+                                            <input
+                                              type="number"
+                                              step={0.01}
+                                              min={0}
+                                              value={carton.items.length === 1 ? carton.grossWeightKg : item.weightKg}
+                                              onChange={(e) => {
+                                                if (carton.items.length === 1) {
+                                                  handleUpdateCartonField(originalIndex, 'grossWeightKg', e.target.value);
+                                                } else {
+                                                  handleUpdateCartonItemField(originalIndex, idx, 'weightKg', e.target.value);
+                                                }
+                                              }}
+                                              className="w-18 text-right bg-transparent border-b border-transparent hover:border-slate-300 focus:border-orange-500 focus:outline-none font-bold tabular-nums ml-auto block print:border-none print:text-black"
+                                            />
+                                          </td>
+                                        </tr>
+                                      ))}
 
-                                {/* Total Row */}
-                                <tr className="border-t-2 border-slate-900 font-black text-slate-900 dark:border-slate-200 dark:text-white text-xs">
-                                  <td colSpan={2} className="py-1.5 px-2 uppercase text-[10px]">
-                                    Total
-                                  </td>
-                                  <td className="py-1.5 px-1 text-right tabular-nums">
-                                    {carton.totalQty}
-                                  </td>
-                                  <td className="py-1.5 px-2 text-right tabular-nums">
-                                    {carton.grossWeightKg.toFixed(2)}
-                                  </td>
-                                </tr>
-                              </tbody>
-                            </table>
-                          </div>
+                                      {/* Total Row */}
+                                      <tr className="border-t-2 border-slate-900 font-black text-slate-900 dark:border-slate-200 dark:text-white text-xs print:text-black">
+                                        <td colSpan={2} className="py-1.5 px-2 uppercase text-[10px]">
+                                          Total
+                                        </td>
+                                        <td className="py-1.5 px-1 text-right tabular-nums">
+                                          {carton.totalQty}
+                                        </td>
+                                        <td className="py-1.5 px-2 text-right tabular-nums">
+                                          {carton.grossWeightKg.toFixed(2)}
+                                        </td>
+                                      </tr>
+                                    </tbody>
+                                  </table>
+                                </div>
+
+                                {/* Footer Branding Bar */}
+                                <div className="pt-2 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between text-[9px] font-mono text-slate-500 dark:text-slate-400 print:text-black">
+                                  <span>OAYKAY FORGINGS • INDUSTRIAL PACKAGING</span>
+                                  <span>BOX {carton.cartonNo} OF {activeSummary?.totalBoxes}</span>
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
-                      );
-                    })}
-                  </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="max-w-xl mx-auto print:max-w-none print:w-full">
+                      {activeSummary.cartons[currentCartonIndex] && (() => {
+                        const carton = activeSummary.cartons[currentCartonIndex];
+                        const realCartonIdx = currentCartonIndex;
+                        const isPromoBox = carton.items.some(it => it.isPromoOrNonStock);
+                        return (
+                          <div className="print:print-page-2labels print:gap-0">
+                            <div
+                              key={carton.id || `carton-label-${carton.cartonNo}`}
+                              className={`shipping-carton-label rounded-2xl border-2 sm:border-3 bg-white p-3.5 sm:p-4 shadow-sm dark:bg-slate-900 font-sans relative ${
+                                isPromoBox ? 'border-purple-600 dark:border-purple-400' : 'border-slate-900 dark:border-slate-200'
+                              }`}
+                            >
+                              {/* Header Block: Carton# | Shipping Mark | PI# */}
+                              <div className="grid grid-cols-3 border-b-2 border-slate-900 pb-2 dark:border-slate-200 font-mono">
+                                <div>
+                                  <div className="text-[10px] font-bold text-slate-500 uppercase">Carton#</div>
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    value={carton.cartonNo}
+                                    onChange={(e) => handleUpdateCartonField(realCartonIdx, 'cartonNo', e.target.value)}
+                                    className="text-lg sm:text-xl font-black text-slate-900 dark:text-white mt-0.5 w-20 bg-transparent border-b border-dashed border-slate-300 focus:outline-none print:border-none print:text-black"
+                                  />
+                                </div>
+
+                                <div className="text-center">
+                                  <div className="text-[10px] font-bold text-slate-500 uppercase">Shipping Mark</div>
+                                  <input
+                                    type="text"
+                                    value={carton.shippingMark}
+                                    onChange={(e) => handleUpdateCartonField(realCartonIdx, 'shippingMark', e.target.value)}
+                                    className="text-xs sm:text-sm font-black text-orange-700 dark:text-orange-400 mt-0.5 text-center w-full bg-transparent border-b border-dashed border-orange-300 focus:outline-none uppercase print:border-none print:text-black"
+                                  />
+                                </div>
+
+                                <div className="text-right">
+                                  <div className="text-[10px] font-bold text-slate-500 uppercase">PI#</div>
+                                  <input
+                                    type="text"
+                                    value={carton.piNumber}
+                                    onChange={(e) => handleUpdateCartonField(realCartonIdx, 'piNumber', e.target.value)}
+                                    className="text-lg sm:text-xl font-black text-slate-900 dark:text-white mt-0.5 text-right w-20 bg-transparent border-b border-dashed border-slate-300 focus:outline-none ml-auto block print:border-none print:text-black"
+                                  />
+                                </div>
+                              </div>
+
+                              {/* Table Block: S# | Product/Size | Quantity (Nos) | Weight (Kg) */}
+                              <div className="mt-2 flex-1">
+                                <table className="w-full table-fixed border-collapse text-left font-mono">
+                                  <thead>
+                                    <tr className="border-b border-slate-300 text-[10px] font-black text-slate-700 uppercase dark:border-slate-700 dark:text-slate-300 print:text-black">
+                                      <th className="w-[10%] py-1.5 px-1 text-center">S#</th>
+                                      <th className="w-[50%] py-1.5 px-2">Product/Size</th>
+                                      <th className="w-[20%] py-1.5 px-1 text-right">Quantity (Nos)</th>
+                                      <th className="w-[20%] py-1.5 px-2 text-right">Weight (Kg)</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-slate-200 dark:divide-slate-800 text-xs">
+                                    {carton.items.map((item, idx) => (
+                                      <tr key={idx}>
+                                        <td className="py-1 px-1 text-center font-bold text-slate-500 print:text-black">
+                                          {idx + 1}
+                                        </td>
+                                        <td className="py-1 px-2 font-black text-slate-900 dark:text-white whitespace-normal break-words leading-tight print:text-black">
+                                          <input
+                                            type="text"
+                                            value={item.cleanName}
+                                            onChange={(e) => handleUpdateCartonItemField(realCartonIdx, idx, 'cleanName', e.target.value)}
+                                            className="w-full bg-transparent border-b border-transparent hover:border-slate-300 focus:border-orange-500 focus:outline-none uppercase font-black print:border-none print:text-black"
+                                          />
+                                        </td>
+                                        <td className="py-1 px-1 text-right font-black text-slate-900 dark:text-white tabular-nums print:text-black">
+                                          <input
+                                            type="number"
+                                            min={0}
+                                            value={item.qty}
+                                            onChange={(e) => handleUpdateCartonItemField(realCartonIdx, idx, 'qty', e.target.value)}
+                                            className="w-16 text-right bg-transparent border-b border-transparent hover:border-slate-300 focus:border-orange-500 focus:outline-none font-black tabular-nums ml-auto block print:border-none print:text-black"
+                                          />
+                                        </td>
+                                        <td className="py-1 px-2 text-right font-bold text-slate-900 dark:text-white tabular-nums print:text-black">
+                                          <input
+                                            type="number"
+                                            step={0.01}
+                                            min={0}
+                                            value={carton.items.length === 1 ? carton.grossWeightKg : item.weightKg}
+                                            onChange={(e) => {
+                                              if (carton.items.length === 1) {
+                                                handleUpdateCartonField(realCartonIdx, 'grossWeightKg', e.target.value);
+                                              } else {
+                                                handleUpdateCartonItemField(realCartonIdx, idx, 'weightKg', e.target.value);
+                                              }
+                                            }}
+                                            className="w-18 text-right bg-transparent border-b border-transparent hover:border-slate-300 focus:border-orange-500 focus:outline-none font-bold tabular-nums ml-auto block print:border-none print:text-black"
+                                          />
+                                        </td>
+                                      </tr>
+                                    ))}
+
+                                    {/* Total Row */}
+                                    <tr className="border-t-2 border-slate-900 font-black text-slate-900 dark:border-slate-200 dark:text-white text-xs print:text-black">
+                                      <td colSpan={2} className="py-1.5 px-2 uppercase text-[10px]">
+                                        Total
+                                      </td>
+                                      <td className="py-1.5 px-1 text-right tabular-nums">
+                                        {carton.totalQty}
+                                      </td>
+                                      <td className="py-1.5 px-2 text-right tabular-nums">
+                                        {carton.grossWeightKg.toFixed(2)}
+                                      </td>
+                                    </tr>
+                                  </tbody>
+                                </table>
+                              </div>
+
+                              {/* Footer Branding Bar */}
+                              <div className="pt-2 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between text-[9px] font-mono text-slate-500 dark:text-slate-400 print:text-black">
+                                <span>OAYKAY FORGINGS • INDUSTRIAL PACKAGING</span>
+                                <span>BOX {carton.cartonNo} OF {activeSummary?.totalBoxes}</span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
