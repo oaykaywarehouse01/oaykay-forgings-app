@@ -1,16 +1,21 @@
 import React, { useState } from 'react';
-import { X, ArrowDownLeft, ArrowUpRight, Scale, CheckCircle2 } from 'lucide-react';
+import { X, ArrowDownLeft, ArrowUpRight, Scale, CheckCircle2, Database, MapPin, Layers } from 'lucide-react';
 import { useInventoryStore } from '../store/useInventoryStore';
-import { TransactionType } from '../types/inventory';
+import { TransactionType, InwardScope } from '../types/inventory';
+import { normalizeLocationCode } from '../lib/locationUtils';
 
 export const StockTransactionModal: React.FC = () => {
   const { 
     stockTransactionModalSku, 
     setStockTransactionModalSku, 
+    warehouseLocations,
+    locationStockEntries,
     recordTransaction 
   } = useInventoryStore();
 
   const [type, setType] = useState<TransactionType>('STOCK_IN');
+  const [scope, setScope] = useState<InwardScope>('TOTAL_STOCK_ONLY');
+  const [location, setLocation] = useState<string>(warehouseLocations[0]?.code || 'A1');
   const [quantityInput, setQuantityInput] = useState<string>('50');
   const [reason, setReason] = useState<string>('Production Batch Receipt (Plant 1 Ludhiana)');
   const [operator, setOperator] = useState<string>('Warehouse Lead');
@@ -24,12 +29,20 @@ export const StockTransactionModal: React.FC = () => {
     e.preventDefault();
     if (parsedQty <= 0) return;
 
+    const targetLoc = (scope === 'LOCATION_ONLY' || scope === 'BOTH')
+      ? normalizeLocationCode(location)
+      : undefined;
+
     recordTransaction(
       stockTransactionModalSku.id,
       type,
       parsedQty,
       reason,
-      operator
+      operator,
+      undefined,
+      targetLoc,
+      undefined,
+      scope
     );
 
     setShowSuccess(true);
@@ -40,7 +53,9 @@ export const StockTransactionModal: React.FC = () => {
   };
 
   const current = stockTransactionModalSku.current_stock;
-  const projectedStock = type === 'STOCK_IN' 
+  const projectedStock = scope === 'LOCATION_ONLY' 
+    ? current 
+    : type === 'STOCK_IN' 
     ? current + parsedQty 
     : type === 'STOCK_OUT'
     ? Math.max(0, current - parsedQty)
@@ -49,7 +64,7 @@ export const StockTransactionModal: React.FC = () => {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/50 backdrop-blur-xs animate-in fade-in duration-150">
       <div 
-        className="w-full max-w-md overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl transition-all dark:border-slate-800 dark:bg-slate-900"
+        className="w-full max-w-lg overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl transition-all dark:border-slate-800 dark:bg-slate-900"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -70,7 +85,7 @@ export const StockTransactionModal: React.FC = () => {
 
           <button
             onClick={() => setStockTransactionModalSku(null)}
-            className="rounded-lg p-1 text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800"
+            className="rounded-lg p-1 text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 cursor-pointer"
           >
             <X className="h-4 w-4" />
           </button>
@@ -80,8 +95,8 @@ export const StockTransactionModal: React.FC = () => {
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
           {/* Movement Type Radio Chips */}
           <div>
-            <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block mb-2">
-              Movement Type
+            <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block mb-1.5">
+              1. Movement Type
             </label>
             <div className="grid grid-cols-3 gap-2">
               {[
@@ -105,11 +120,43 @@ export const StockTransactionModal: React.FC = () => {
             </div>
           </div>
 
+          {/* Operation Target / Scope */}
+          <div>
+            <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block mb-1.5">
+              2. Operation Scope (Prevents Mismatch)
+            </label>
+            <div className="grid grid-cols-3 gap-2 text-xs">
+              {[
+                { id: 'TOTAL_STOCK_ONLY', label: 'Total Only', desc: 'Tally Stock', icon: Database, color: 'border-indigo-500 bg-indigo-50/70 text-indigo-900 dark:bg-indigo-950/60 dark:text-indigo-200' },
+                { id: 'LOCATION_ONLY', label: 'Location Only', desc: 'Floor Count', icon: MapPin, color: 'border-purple-500 bg-purple-50/70 text-purple-900 dark:bg-purple-950/60 dark:text-purple-200' },
+                { id: 'BOTH', label: 'Simultaneous', desc: 'Total + Rack', icon: Layers, color: 'border-emerald-500 bg-emerald-50/70 text-emerald-900 dark:bg-emerald-950/60 dark:text-emerald-200' },
+              ].map(opt => {
+                const isSel = scope === opt.id;
+                const Icon = opt.icon;
+                return (
+                  <div
+                    key={opt.id}
+                    onClick={() => setScope(opt.id as InwardScope)}
+                    className={`p-2 rounded-xl border-2 cursor-pointer transition select-none text-center ${
+                      isSel 
+                        ? `${opt.color} font-bold shadow-2xs` 
+                        : 'border-slate-200 bg-white text-slate-600 dark:border-slate-800 dark:bg-slate-900'
+                    }`}
+                  >
+                    <Icon className="h-3.5 w-3.5 mx-auto mb-0.5 text-slate-600 dark:text-slate-300" />
+                    <div className="font-black text-[11px]">{opt.label}</div>
+                    <div className="text-[9px] text-slate-400">{opt.desc}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
           {/* Quantity & Stock Impact Preview */}
           <div className="grid grid-cols-2 gap-3 items-center">
             <div>
               <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block mb-1">
-                {type === 'AUDIT_ADJUSTMENT' ? 'Audited Physical Qty' : 'Quantity to Move'}
+                {type === 'AUDIT_ADJUSTMENT' ? 'Audited Qty' : 'Quantity to Move'} ({stockTransactionModalSku.unit})
               </label>
               <input
                 type="number"
@@ -121,14 +168,40 @@ export const StockTransactionModal: React.FC = () => {
             </div>
 
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-center dark:border-slate-800 dark:bg-slate-800/60">
-              <span className="text-[10px] text-slate-400 uppercase font-semibold block">Stock Impact</span>
+              <span className="text-[10px] text-slate-400 uppercase font-semibold block">
+                {scope === 'LOCATION_ONLY' ? 'Master Stock (Safe)' : 'Master Stock Impact'}
+              </span>
               <div className="mt-0.5 font-mono text-sm font-bold text-slate-900 dark:text-white">
-                <span className="text-slate-400">{current}</span>
-                <span className="mx-1 text-slate-300">→</span>
-                <span className="text-orange-600 dark:text-orange-400">{projectedStock} {stockTransactionModalSku.unit}</span>
+                {scope === 'LOCATION_ONLY' ? (
+                  <span className="text-purple-600 font-bold">{current} {stockTransactionModalSku.unit} (Unchanged)</span>
+                ) : (
+                  <>
+                    <span className="text-slate-400">{current}</span>
+                    <span className="mx-1 text-slate-300">→</span>
+                    <span className="text-orange-600 dark:text-orange-400">{projectedStock} {stockTransactionModalSku.unit}</span>
+                  </>
+                )}
               </div>
             </div>
           </div>
+
+          {/* Location Selector (when Location or Both selected) */}
+          {(scope === 'LOCATION_ONLY' || scope === 'BOTH') && (
+            <div>
+              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                Target Storage Rack / Bin
+              </label>
+              <select
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-mono font-bold text-slate-900 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              >
+                {warehouseLocations.map(l => (
+                  <option key={l.code} value={l.code}>{l.code} ({l.description})</option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {/* Reason Code */}
           <div>
@@ -139,7 +212,7 @@ export const StockTransactionModal: React.FC = () => {
               type="text"
               value={reason}
               onChange={(e) => setReason(e.target.value)}
-              placeholder="e.g. Invoice #SO-26-8812, Container arrival, Audit Q3..."
+              placeholder="e.g. Invoice #SO-26-8812, Gate receipt, Heat batch #..."
               className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-white"
             />
           </div>
@@ -162,13 +235,13 @@ export const StockTransactionModal: React.FC = () => {
             <button
               type="button"
               onClick={() => setStockTransactionModalSku(null)}
-              className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 cursor-pointer"
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="flex items-center gap-1.5 rounded-lg bg-orange-600 px-5 py-2 text-xs font-bold text-white shadow-xs hover:bg-orange-700 active:scale-98"
+              className="flex items-center gap-1.5 rounded-lg bg-orange-600 px-5 py-2 text-xs font-bold text-white shadow-xs hover:bg-orange-700 active:scale-98 cursor-pointer"
             >
               {showSuccess ? (
                 <>

@@ -14,7 +14,8 @@ import {
   WarehouseLocation,
   LocationStockEntry,
   CountSession,
-  AppUser
+  AppUser,
+  InwardScope
 } from '../types/inventory';
 import { InventorySearchEngine } from '../lib/searchEngine';
 import { generateInitialWarehouseLocations, normalizeLocationCode, isMockLocationCode, getLocationDescription } from '../lib/locationUtils';
@@ -173,11 +174,12 @@ interface InventoryStore {
     skuId: string, 
     type: TransactionType, 
     quantity: number, 
-    reason: string, 
-    performedBy: string,
+    reason?: string, 
+    performedBy?: string,
     notes?: string,
     location?: string,
-    referenceNo?: string
+    referenceNo?: string,
+    scope?: InwardScope
   ) => void;
   addNewSku: (item: {
     clean_name: string;
@@ -583,49 +585,142 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
     });
   },
 
-  recordTransaction: (skuId, type, quantity, reason, performedBy, notes, location, referenceNo) => {
+  recordTransaction: (skuId, type, quantity, reason, performedBy, notes, location, referenceNo, scope) => {
     const state = get();
     const sku = state.skus.find(s => s.id === skuId);
     if (!sku) return;
 
     const prevStock = Math.round(sku.current_stock);
-    let newStock = prevStock;
     const intQty = Math.round(quantity);
+    
+    // Default scope resolution:
+    // If scope is explicitly provided, use it. Otherwise, if location is provided default to 'BOTH', else 'TOTAL_STOCK_ONLY'
+    const resolvedScope: InwardScope = scope || (location ? 'BOTH' : 'TOTAL_STOCK_ONLY');
 
-    if (type === 'STOCK_IN') {
-      newStock = prevStock + intQty;
-    } else if (type === 'STOCK_OUT') {
-      newStock = prevStock - intQty;
-    } else if (type === 'AUDIT_ADJUSTMENT' || type === 'LOCATION_RECONCILIATION') {
-      newStock = intQty;
+    let newStock = prevStock;
+    if (resolvedScope === 'TOTAL_STOCK_ONLY' || resolvedScope === 'BOTH') {
+      if (type === 'STOCK_IN') {
+        newStock = prevStock + intQty;
+      } else if (type === 'STOCK_OUT') {
+        newStock = prevStock - intQty;
+      } else if (type === 'AUDIT_ADJUSTMENT' || type === 'LOCATION_RECONCILIATION') {
+        newStock = intQty;
+      }
+    } else {
+      // LOCATION_ONLY: Master / Tally total stock does NOT change!
+      newStock = prevStock;
+    }
+
+    let nextLocationEntries = [...state.locationStockEntries];
+    let nextLocations = [...state.warehouseLocations];
+    const normLoc = location ? normalizeLocationCode(location) : '';
+
+    // If location is provided and scope touches location
+    if (normLoc && (resolvedScope === 'LOCATION_ONLY' || resolvedScope === 'BOTH')) {
+      const existingEntryIdx = nextLocationEntries.findIndex(
+        e => e.skuId === sku.id && e.locationCode === normLoc
+      );
+
+      if (type === 'STOCK_IN' || resolvedScope === 'LOCATION_ONLY') {
+        if (existingEntryIdx !== -1) {
+          nextLocationEntries[existingEntryIdx] = {
+            ...nextLocationEntries[existingEntryIdx],
+            countedQty: Math.max(0, nextLocationEntries[existingEntryIdx].countedQty + intQty),
+            countedAt: new Date().toISOString(),
+            countedBy: performedBy || state.currentUser?.name || 'Staff',
+            notes: notes || nextLocationEntries[existingEntryIdx].notes
+          };
+        } else {
+          nextLocationEntries.push({
+            id: `LOC-ENT-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+            skuId: sku.id,
+            skuCode: sku.sku_code,
+            cleanName: sku.clean_name,
+            division: sku.division,
+            mainCategory: sku.main_category,
+            locationCode: normLoc,
+            countedQty: intQty,
+            countedAt: new Date().toISOString(),
+            countedBy: performedBy || state.currentUser?.name || 'Staff',
+            notes: notes || (resolvedScope === 'LOCATION_ONLY' ? 'Location Mapping Entry' : 'Stock IN Putaway')
+          });
+        }
+      } else if (type === 'STOCK_OUT') {
+        if (existingEntryIdx !== -1) {
+          nextLocationEntries[existingEntryIdx] = {
+            ...nextLocationEntries[existingEntryIdx],
+            countedQty: Math.max(0, nextLocationEntries[existingEntryIdx].countedQty - intQty),
+            countedAt: new Date().toISOString(),
+            countedBy: performedBy || state.currentUser?.name || 'Staff',
+            notes: notes || nextLocationEntries[existingEntryIdx].notes
+          };
+        }
+      }
+
+      // Auto-register location in warehouseLocations if not already registered
+      if (!nextLocations.some(l => l.code === normLoc)) {
+        nextLocations.push({
+          code: normLoc,
+          type: normLoc.startsWith('BIN') ? 'BIN' : (normLoc.match(/^[A-G]/) ? 'RACK' : 'PALLET'),
+          zone: normLoc.startsWith('BIN') ? 'Storage Bins' : (normLoc.match(/^[A-G]/) ? `Rack ${normLoc.charAt(0)}` : `Line ${normLoc.charAt(0)}`),
+          description: getLocationDescription(normLoc)
+        });
+      }
+    }
+
+    // Determine final location_bin string for SKU
+    let finalLocationBin = sku.location_bin;
+    if (resolvedScope === 'LOCATION_ONLY' || resolvedScope === 'BOTH') {
+      const activeEntries = nextLocationEntries.filter(e => e.skuId === sku.id && e.countedQty > 0);
+      if (activeEntries.length > 0) {
+        finalLocationBin = activeEntries.map(e => `${e.locationCode} (${e.countedQty})`).join(', ');
+      } else if (normLoc) {
+        finalLocationBin = normLoc;
+      }
     }
 
     const updatedSku: SkuItem = {
       ...sku,
       current_stock: newStock,
       quantity: newStock,
-      location_bin: location ? location : sku.location_bin,
+      location_bin: finalLocationBin,
       status: newStock === 0 ? 'Zero Stock' : (newStock < 0 ? 'Negative' : 'In Stock'),
       last_modified: new Date().toISOString(),
-      last_audit_date: type === 'AUDIT_ADJUSTMENT' ? new Date().toLocaleDateString('en-GB') : sku.last_audit_date
+      last_audit_date: (type === 'AUDIT_ADJUSTMENT' || resolvedScope === 'LOCATION_ONLY') 
+        ? new Date().toLocaleDateString('en-GB') 
+        : sku.last_audit_date
     };
+
+    let displayReason = reason;
+    if (!displayReason) {
+      if (resolvedScope === 'LOCATION_ONLY') {
+        displayReason = `Location Floor Count: ${type === 'STOCK_IN' ? '+' : '-'}${intQty} ${sku.unit} on ${normLoc || 'Location'} (Tally total unchanged at ${prevStock})`;
+      } else if (resolvedScope === 'TOTAL_STOCK_ONLY') {
+        displayReason = `Total Stock Inward: ${type === 'STOCK_IN' ? '+' : '-'}${intQty} ${sku.unit} (Tally Balance ${prevStock} → ${newStock}, Location uncounted)`;
+      } else {
+        displayReason = `${type} (Simultaneous: Total Stock + Location ${normLoc || ''})`;
+      }
+    }
 
     const newTxn: Transaction = {
       id: `TXN-${Date.now().toString().slice(-6)}`,
       sku_code: sku.sku_code,
       sku_name: sku.clean_name,
-      type,
+      type: resolvedScope === 'LOCATION_ONLY' ? 'LOCATION_RECONCILIATION' : type,
       quantity: intQty,
-      reason: reason || `${type} operation`,
+      reason: displayReason,
       performed_by: performedBy || state.currentUser?.name || 'Operator',
       timestamp: new Date().toISOString(),
       prev_stock: prevStock,
       new_stock: newStock,
       notes: notes || undefined,
-      location: location || sku.location_bin,
+      location: resolvedScope === 'TOTAL_STOCK_ONLY' 
+        ? (normLoc ? `${normLoc} (Unverified/Ref)` : 'Tally Stock (Unassigned)') 
+        : (normLoc || sku.location_bin),
       referenceNo: referenceNo || undefined,
       division: sku.division,
-      main_category: sku.main_category
+      main_category: sku.main_category,
+      scope: resolvedScope
     };
 
     const nextSkus = state.skus.map(s => s.id === skuId ? updatedSku : s);
@@ -641,42 +736,25 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
       };
     }
 
-    // If a specific location was provided for Stock IN, also record or update that location's entry
-    let nextLocationEntries = [...state.locationStockEntries];
-    if (location && type === 'STOCK_IN') {
-      const normLoc = normalizeLocationCode(location);
-      const existingEntryIdx = nextLocationEntries.findIndex(e => e.skuId === sku.id && e.locationCode === normLoc);
-      if (existingEntryIdx !== -1) {
-        nextLocationEntries[existingEntryIdx] = {
-          ...nextLocationEntries[existingEntryIdx],
-          countedQty: nextLocationEntries[existingEntryIdx].countedQty + intQty,
-          countedAt: new Date().toISOString(),
-          notes: notes || nextLocationEntries[existingEntryIdx].notes
-        };
-      } else {
-        nextLocationEntries.push({
-          id: `LOC-ENT-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-          skuId: sku.id,
-          skuCode: sku.sku_code,
-          cleanName: sku.clean_name,
-          division: sku.division,
-          mainCategory: sku.main_category,
-          locationCode: normLoc,
-          countedQty: intQty,
-          countedAt: new Date().toISOString(),
-          countedBy: performedBy || state.currentUser?.name || 'Staff',
-          notes: notes || 'Stock IN auto-entry'
-        });
+    const nextCategories = state.categories.map(c => {
+      if (c.division === sku.division && c.main_category === sku.main_category && c.sub_category === sku.sub_category) {
+        const catStock = nextSkus
+          .filter(s => s.division === c.division && s.main_category === c.main_category && s.sub_category === c.sub_category)
+          .reduce((a, s) => a + Math.round(s.current_stock), 0);
+        return { ...c, total_stock: catStock };
       }
-    }
+      return c;
+    });
 
     state.searchEngine.updateData(nextSkus);
 
     set({
       skus: nextSkus,
+      categories: nextCategories,
       divisions: nextDivisions,
       transactions: nextTransactions,
       locationStockEntries: nextLocationEntries,
+      warehouseLocations: nextLocations,
       stats: nextStats,
       selectedSku: state.selectedSku?.id === skuId ? updatedSku : state.selectedSku,
       stockTransactionModalSku: null
@@ -684,11 +762,11 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
 
     saveStorage({
       skus: nextSkus,
-      categories: state.categories,
+      categories: nextCategories,
       divisions: nextDivisions,
       transactions: nextTransactions,
       deductedSalesOrders: state.deductedSalesOrders,
-      warehouseLocations: state.warehouseLocations,
+      warehouseLocations: nextLocations,
       locationStockEntries: nextLocationEntries,
       countSession: state.countSession,
       users: state.users,

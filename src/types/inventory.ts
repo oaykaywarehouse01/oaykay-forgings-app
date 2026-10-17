@@ -56,6 +56,8 @@ export interface SkuItem {
 
 export type TransactionType = 'STOCK_IN' | 'STOCK_OUT' | 'AUDIT_ADJUSTMENT' | 'WRITE_OFF_SYNC' | 'LOCATION_RECONCILIATION';
 
+export type InwardScope = 'BOTH' | 'TOTAL_STOCK_ONLY' | 'LOCATION_ONLY';
+
 export interface Transaction {
   id: string;
   sku_code: string;
@@ -72,6 +74,7 @@ export interface Transaction {
   referenceNo?: string;
   division?: DivisionCode;
   main_category?: string;
+  scope?: InwardScope;
 }
 
 export interface InventoryStats {
