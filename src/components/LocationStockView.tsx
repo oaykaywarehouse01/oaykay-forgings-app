@@ -489,9 +489,9 @@ export const LocationStockView: React.FC = () => {
       )}
 
       {/* Top Banner & Control Bar */}
-      <div className="rounded-2xl border border-slate-200/80 bg-white p-5 sm:p-6 shadow-xs dark:border-slate-800 dark:bg-slate-900 transition-all">
-        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-5">
-          {/* Header Info */}
+      <div className="rounded-2xl border border-slate-200/90 bg-white p-5 sm:p-6 shadow-xs dark:border-slate-800 dark:bg-slate-900 transition-all space-y-4">
+        {/* Row 1: Header Titles, Badges, and LIVE Sync button */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-100 dark:border-slate-800/80">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <span className="inline-flex items-center gap-1.5 rounded-full bg-orange-50 px-2.5 py-0.5 text-[11px] font-black text-orange-700 dark:bg-orange-950/60 dark:text-orange-300 border border-orange-200/80 dark:border-orange-800/60 uppercase tracking-wide">
@@ -507,17 +507,32 @@ export const LocationStockView: React.FC = () => {
               Warehouse Location Stock
             </h1>
 
-            <p className="mt-1 text-xs sm:text-sm text-slate-600 dark:text-slate-300">
-              <span className="font-semibold text-slate-900 dark:text-white">Active Warehouse Zones:</span> Steel Racks (A–G, 3 shelves) • Floor Pallet Lines (H–P, 6 pallets) • Small Parts Bins (BIN-1 to BIN-30)
-            </p>
-
-            <p className="mt-1 text-[11px] sm:text-xs text-slate-400 dark:text-slate-500">
-              Physical counting operates isolated from daily dispatches until Admin triggers <strong className="text-slate-600 dark:text-slate-300 font-semibold">Make Location Stock LIVE</strong>.
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+              Physical counting operates isolated from daily dispatches until Admin triggers <strong className="text-slate-700 dark:text-slate-200 font-semibold">Make Location Stock LIVE</strong>.
             </p>
           </div>
 
-          {/* Action Buttons */}
-          <div className="flex flex-wrap items-center gap-2.5 xl:justify-end shrink-0 pt-3 xl:pt-0 border-t xl:border-t-0 border-slate-100 dark:border-slate-800">
+          {currentUser?.role === 'admin' && (
+            <div className="shrink-0">
+              <button
+                onClick={handleMakeLocationStockLive}
+                className="w-full sm:w-auto flex items-center justify-center gap-2 rounded-xl bg-orange-600 px-5 py-2.5 text-xs font-black text-white shadow-md hover:bg-orange-700 active:scale-95 transition cursor-pointer"
+                title="Sync net location physical totals into main Stock Master"
+              >
+                <RefreshCw className="h-4 w-4" />
+                <span>Make Location Stock LIVE!</span>
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Row 2: Warehouse Zones information on the left + Excel / Location Actions on the right */}
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pt-1">
+          <div className="text-xs text-slate-600 dark:text-slate-300">
+            <span className="font-bold text-slate-900 dark:text-white">Active Warehouse Zones:</span> Steel Racks (A–G, 3 shelves) • Floor Pallet Lines (H–P, 6 pallets) • Small Parts Bins (BIN-1 to BIN-30)
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2.5 shrink-0">
             <button
               onClick={handleDownloadTemplate}
               className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50/90 px-3.5 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/90 dark:text-slate-200 transition shadow-2xs hover:shadow-xs active:scale-95 cursor-pointer"
@@ -546,17 +561,6 @@ export const LocationStockView: React.FC = () => {
               <Plus className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
               <span>+ Add Location</span>
             </button>
-
-            {currentUser?.role === 'admin' && (
-              <button
-                onClick={handleMakeLocationStockLive}
-                className="flex items-center gap-2 rounded-xl bg-orange-600 px-4 py-2 text-xs font-black text-white shadow-xs hover:bg-orange-700 active:scale-95 transition cursor-pointer"
-                title="Sync net location physical totals into main Stock Master"
-              >
-                <RefreshCw className="h-3.5 w-3.5" />
-                <span>Make Location Stock LIVE!</span>
-              </button>
-            )}
           </div>
         </div>
       </div>
