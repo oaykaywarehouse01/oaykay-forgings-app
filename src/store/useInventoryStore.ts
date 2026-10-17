@@ -56,7 +56,7 @@ export const defaultUsers: AppUser[] = [
   },
   {
     id: 'user-dispatch',
-    name: 'Dispatch Manager',
+    name: 'Dispatch',
     role: 'dispatch_manager',
     pin: '2222',
     avatarColor: 'bg-emerald-600',
@@ -72,7 +72,7 @@ export const defaultUsers: AppUser[] = [
   },
   {
     id: 'user-storekeeper',
-    name: 'Inward Storekeeper',
+    name: 'Inward',
     role: 'inward_storekeeper',
     pin: '3333',
     avatarColor: 'bg-indigo-600',
@@ -88,7 +88,7 @@ export const defaultUsers: AppUser[] = [
   },
   {
     id: 'user-count',
-    name: 'Godown Count Staff',
+    name: 'Location Counter',
     role: 'count_staff',
     pin: '4444',
     avatarColor: 'bg-amber-600',
@@ -279,6 +279,9 @@ const getInitialState = () => {
         // Sanitize users: remove any legacy mock Indian names
         const sanitizedUsers = (parsed.users && parsed.users.length > 0)
           ? (parsed.users as AppUser[]).map(u => {
+              if (u.name === 'Dispatch Manager') return { ...u, name: 'Dispatch' };
+              if (u.name === 'Inward Storekeeper') return { ...u, name: 'Inward' };
+              if (u.name === 'Godown Count Staff') return { ...u, name: 'Location Counter' };
               if (
                 u.name.includes('Singh') || 
                 u.name.includes('Rajesh') || 

@@ -176,7 +176,7 @@ export const UserManagementModal: React.FC = () => {
                     value={curNameInput}
                     onChange={(e) => setCurNameInput(e.target.value)}
                     className="rounded-lg border border-orange-400 bg-white px-2.5 py-1 text-xs font-bold text-slate-900 dark:bg-slate-800 dark:text-white"
-                    placeholder="Your Name (e.g. Girish)"
+                    placeholder="Your Name (e.g. Operations, John)"
                     autoFocus
                   />
                   <button
@@ -344,7 +344,7 @@ export const UserManagementModal: React.FC = () => {
                     </label>
                     <input
                       type="text"
-                      placeholder="e.g. Girish, Ramesh, Suresh, Aman"
+                      placeholder="e.g. John, Alex, Dispatch Counter, Staff 1"
                       value={newUserName}
                       onChange={(e) => setNewUserName(e.target.value)}
                       className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-900 placeholder:font-normal dark:bg-slate-800 dark:border-slate-700 dark:text-white"
