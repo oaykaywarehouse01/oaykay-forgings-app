@@ -25,25 +25,29 @@ export const downloadLocationStockTemplate = async (
     views: [{ state: 'frozen', ySplit: 4 }]
   });
 
-  // Set explicit, generous column widths
+  // Set explicit, generous column widths (Supports up to 5 Locations per SKU)
   ws1.columns = [
-    { key: 'skuCode', width: 18 },       // A: SKU Code
-    { key: 'cleanName', width: 44 },     // B: Item Name / Description
-    { key: 'division', width: 13 },      // C: Division
-    { key: 'mainCategory', width: 25 },  // D: Category
-    { key: 'locationCode', width: 18 },  // E: Location Code 1
-    { key: 'countedQty', width: 16 },    // F: Physical Counted Qty 1
-    { key: 'secLocation', width: 18 },   // G: 2nd Location (If Split)
-    { key: 'secQty', width: 16 },        // H: 2nd Location Qty
-    { key: 'thirdLocation', width: 18 }, // I: 3rd Location (If Split)
-    { key: 'thirdQty', width: 16 },      // J: 3rd Location Qty
-    { key: 'totalQty', width: 18 },      // K: Total Units Counted
-    { key: 'notes', width: 28 },         // L: Staff Notes / Shelf
+    { key: 'skuCode', width: 18 },        // A: SKU Code
+    { key: 'cleanName', width: 44 },      // B: Item Name / Description
+    { key: 'division', width: 13 },       // C: Division
+    { key: 'mainCategory', width: 25 },   // D: Category
+    { key: 'loc1', width: 16 },           // E: Location 1
+    { key: 'qty1', width: 14 },           // F: Qty 1
+    { key: 'loc2', width: 16 },           // G: 2nd Location
+    { key: 'qty2', width: 14 },           // H: 2nd Qty
+    { key: 'loc3', width: 16 },           // I: 3rd Location
+    { key: 'qty3', width: 14 },           // J: 3rd Qty
+    { key: 'loc4', width: 16 },           // K: 4th Location
+    { key: 'qty4', width: 14 },           // L: 4th Qty
+    { key: 'loc5', width: 16 },           // M: 5th Location
+    { key: 'qty5', width: 14 },           // N: 5th Qty
+    { key: 'totalQty', width: 18 },       // O: Total Units Counted
+    { key: 'notes', width: 28 },          // P: Staff Notes / Remarks
   ];
 
   // Row 1: Main Title
   const titleRow = ws1.addRow(['OAYKAY FORGINGS PVT LTD — WAREHOUSE PHYSICAL STOCK COUNT TEMPLATE']);
-  ws1.mergeCells('A1:L1');
+  ws1.mergeCells('A1:P1');
   titleRow.height = 36;
   const titleCell = ws1.getCell('A1');
   titleCell.font = { name: 'Segoe UI', size: 13, bold: true, color: { argb: 'FFFFFFFF' } };
@@ -51,8 +55,8 @@ export const downloadLocationStockTemplate = async (
   titleCell.alignment = { vertical: 'middle', horizontal: 'center' };
 
   // Row 2: Subtitle & Instructions
-  const subRow = ws1.addRow(['INSTRUCTIONS: 1) Columns A-D are pre-filled catalog SKUs. 2) Enter Locations (Racks A1-G3, Pallets H1+, Bins BIN-1+) & Qty in YELLOW columns. 3) Supports up to 3 locations per SKU (or add another row for 4+ locations).']);
-  ws1.mergeCells('A2:L2');
+  const subRow = ws1.addRow(['INSTRUCTIONS: 1) Columns A-D are pre-filled catalog SKUs. 2) Enter Locations (Racks A1-G3, Pallets H1+, Bins BIN-1+) & Quantities in the location columns (supports up to 5 locations per SKU). 3) Total Counted is calculated automatically.']);
+  ws1.mergeCells('A2:P2');
   subRow.height = 24;
   const subCell = ws1.getCell('A2');
   subCell.font = { name: 'Segoe UI', size: 9, italic: true, color: { argb: 'FFCBD5E1' } };
@@ -75,8 +79,12 @@ export const downloadLocationStockTemplate = async (
     '2nd Qty (H)',
     '3rd Location (I)',
     '3rd Qty (J)',
-    'Total Counted (K)',
-    'Auditor Notes / Shelf (L)'
+    '4th Location (K)',
+    '4th Qty (L)',
+    '5th Location (M)',
+    '5th Qty (N)',
+    'Total Counted (O)',
+    'Auditor Notes / Remarks (P)'
   ]);
   headerRow.height = 30;
 
@@ -101,7 +109,15 @@ export const downloadLocationStockTemplate = async (
       // 3rd location: Soft Indigo/Blue
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEEF2FF' } };
       cell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: 'FF3730A3' } };
-    } else if (colNumber === 11) {
+    } else if (colNumber === 11 || colNumber === 12) {
+      // 4th location: Soft Violet/Purple
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F3FF' } };
+      cell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: 'FF5B21B6' } };
+    } else if (colNumber === 13 || colNumber === 14) {
+      // 5th location: Soft Teal
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0FDFA' } };
+      cell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: 'FF115E59' } };
+    } else if (colNumber === 15) {
       // Total column: Soft Emerald
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD1FAE5' } };
       cell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: 'FF065F46' } };
@@ -126,7 +142,11 @@ export const downloadLocationStockTemplate = async (
       '',
       '',
       '',
-      { formula: `SUM(F${rowNum},H${rowNum},J${rowNum})` },
+      '',
+      '',
+      '',
+      '',
+      { formula: `SUM(F${rowNum},H${rowNum},J${rowNum},L${rowNum},N${rowNum})` },
       ''
     ]);
     row.height = 22;
@@ -163,18 +183,18 @@ export const downloadLocationStockTemplate = async (
         cell.alignment = { vertical: 'middle', horizontal: 'left' };
         cell.font = { name: 'Segoe UI', size: 9, color: { argb: 'FF334155' } };
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bgNeutral } };
-      } else if (colNumber === 5 || colNumber === 7 || colNumber === 9) {
+      } else if (colNumber === 5 || colNumber === 7 || colNumber === 9 || colNumber === 11 || colNumber === 13) {
         // Location code columns
         cell.alignment = { vertical: 'middle', horizontal: 'center' };
         cell.font = { name: 'Segoe UI', size: 9.5, bold: true, color: { argb: 'FF0F172A' } };
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFBEB' } }; // Soft light amber
-      } else if (colNumber === 6 || colNumber === 8 || colNumber === 10) {
+      } else if (colNumber === 6 || colNumber === 8 || colNumber === 10 || colNumber === 12 || colNumber === 14) {
         // Qty columns
         cell.alignment = { vertical: 'middle', horizontal: 'right' };
         cell.font = { name: 'Segoe UI', size: 9.5, bold: true, color: { argb: 'FF0F172A' } };
         cell.numFmt = '#,##0';
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFBEB' } };
-      } else if (colNumber === 11) {
+      } else if (colNumber === 15) {
         // Total column
         cell.alignment = { vertical: 'middle', horizontal: 'right' };
         cell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: 'FF047857' } };
@@ -201,7 +221,11 @@ export const downloadLocationStockTemplate = async (
       '',
       '',
       '',
-      { formula: `SUM(F${rowNum},H${rowNum},J${rowNum})` },
+      '',
+      '',
+      '',
+      '',
+      { formula: `SUM(F${rowNum},H${rowNum},J${rowNum},L${rowNum},N${rowNum})` },
       'Brand new SKU entered by staff'
     ]);
     row.height = 22;
@@ -216,7 +240,7 @@ export const downloadLocationStockTemplate = async (
         cell.alignment = { vertical: 'middle', horizontal: 'center' };
         cell.font = { name: 'Consolas', size: 9, bold: true, color: { argb: 'FF2563EB' } };
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEFF6FF' } };
-      } else if (colNumber === 11) {
+      } else if (colNumber === 15) {
         cell.alignment = { vertical: 'middle', horizontal: 'right' };
         cell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: 'FF047857' } };
         cell.numFmt = '#,##0';
@@ -441,37 +465,24 @@ export const parseUploadedLocationStockExcel = async (
           const pairs: Array<{ loc: string; qty: number }> = [];
 
           if (isNewFormat) {
-            // New 10-column layout
-            // Col 0: SKU Code, Col 1: Item Name, Col 2: Division, Col 3: Category
-            // Col 4: Primary Loc, Col 5: Primary Qty
-            // Col 6: Sec Loc, Col 7: Sec Qty
-            // Col 8: Total, Col 9: Notes
+            // New layout (supports 2 to 5 locations: cols 4/5, 6/7, 8/9, 10/11, 12/13)
             rawName = String(row[1] || '').trim();
             const divCandidate = String(row[2] || '').trim().toUpperCase();
             if (divCandidate === 'DIM' || divCandidate === 'DIN' || divCandidate === 'DTR') {
               rawDiv = divCandidate as DivisionCode;
             }
             rawMainCat = String(row[3] || '').trim();
-            notes = String(row[9] || '').trim();
 
-            const loc1 = normalizeLocationCode(row[4]);
-            const qty1 = Math.round(parseFloat(String(row[5] || '0')) || 0);
-
-            const loc2 = normalizeLocationCode(row[6]);
-            const qty2 = Math.round(parseFloat(String(row[7] || '0')) || 0);
-
-            // Check for 3rd location (12-column layout)
-            const loc3 = normalizeLocationCode(row[8]);
-            const qty3 = Math.round(parseFloat(String(row[9] || '0')) || 0);
-
-            if (loc1 && qty1 > 0) pairs.push({ loc: loc1, qty: qty1 });
-            if (loc2 && qty2 > 0) pairs.push({ loc: loc2, qty: qty2 });
-            if (loc3 && qty3 > 0) {
-              pairs.push({ loc: loc3, qty: qty3 });
-              notes = String(row[11] || '').trim();
-            } else {
-              notes = String(row[11] || row[9] || '').trim();
+            // Loop through up to 5 location & quantity pairs
+            for (let c = 4; c <= 12; c += 2) {
+              const loc = normalizeLocationCode(row[c]);
+              const qty = Math.round(parseFloat(String(row[c + 1] || '0')) || 0);
+              if (loc && qty > 0) {
+                pairs.push({ loc, qty });
+              }
             }
+
+            notes = String(row[15] || row[13] || row[11] || row[9] || '').trim();
           } else {
             // Legacy 14-column layout
             // Col 0: SKU, Col 1: Div, Col 2: Main, Col 3: Sub, Col 4: Name
