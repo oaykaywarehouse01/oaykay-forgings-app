@@ -751,7 +751,7 @@ export const StockEntryView: React.FC = () => {
                   </label>
                   <textarea
                     rows={2}
-                    placeholder="e.g. Received from forge plant, checked by Ramesh, packed in 10 bags..."
+                    placeholder="e.g. Received from forge plant, inspected by QA team, packed in 10 bags..."
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
                     className="w-full rounded-xl border border-slate-300 bg-white p-3 text-xs text-slate-900 focus:outline-hidden dark:bg-slate-800 dark:border-slate-700 dark:text-white"

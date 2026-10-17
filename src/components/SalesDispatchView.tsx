@@ -1156,7 +1156,7 @@ export const SalesDispatchView: React.FC = () => {
                 </div>
                 <div>
                   <h2 className="text-sm sm:text-base font-black text-slate-900 dark:text-white flex items-center gap-2">
-                    <span>Interactive Manual Box Builder (डिब्बे और वज़न सेट करें)</span>
+                    <span>Interactive Manual Box Builder (Configure Boxes & Weights)</span>
                     <span className="text-[10px] font-mono font-bold text-orange-700 bg-orange-100 dark:bg-orange-950 dark:text-orange-300 px-2 py-0.5 rounded-md">
                       Live Box Calculator
                     </span>
@@ -2152,7 +2152,7 @@ export const SalesDispatchView: React.FC = () => {
                 </div>
                 <div>
                   <h3 className="text-sm sm:text-base font-black text-slate-900 dark:text-white">
-                    Confirm Dispatch with Negative Stock (स्टॉक माइनस होगा)
+                    Confirm Dispatch with Negative Stock (Stock Deficit)
                   </h3>
                   <p className="text-xs text-rose-700 dark:text-rose-400 font-medium">
                     Order quantity exceeds available warehouse stock. Negative stock is fully allowed.
@@ -2170,7 +2170,7 @@ export const SalesDispatchView: React.FC = () => {
 
             <div className="p-6 space-y-4">
               <p className="text-xs text-slate-600 dark:text-slate-300">
-                Aapke paas neeche di gayi items ka stock kam hai. Agar aap dispatch confirm karte hain, to ye item inventory mein <strong className="text-rose-600 dark:text-rose-400 font-bold">Negative (-ve)</strong> chali jayengi, jo system mein fully supported hai:
+                The items listed below have insufficient stock. If you confirm this dispatch, these items will transition to <strong className="text-rose-600 dark:text-rose-400 font-bold">Negative (-ve)</strong> stock in the master inventory, which is fully supported:
               </p>
 
               <div className="rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
@@ -2205,7 +2205,7 @@ export const SalesDispatchView: React.FC = () => {
               </div>
 
               <div className="rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/60 p-3 text-xs text-amber-800 dark:text-amber-300">
-                💡 <strong>Warehouse Note:</strong> Dispatch confirm karne par Stock Master mein in items ke saamne <strong>Red Tag (-ve)</strong> show hoga aur new stock inward hote hi ye balance out ho jayengi.
+                💡 <strong>Warehouse Note:</strong> Confirming dispatch will flag these items with a <strong>Red Tag (-ve)</strong> in Stock Master. Subsequent inward receipts will automatically reconcile the deficit.
               </div>
 
               <div className="flex items-center justify-end gap-2.5 pt-2">
