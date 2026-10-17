@@ -801,6 +801,65 @@ export const SalesDispatchView: React.FC = () => {
     setSuccessMessage(`Deleted Carton #${removedNo}.`);
   };
 
+  // Update target carton allocation for an item's remainder / loose IC quantity
+  const handleUpdateRemainderTarget = (slNo: number, target: number | 'mixed' | 'separate') => {
+    if (!soData) return;
+    const nextItems = soData.items.map(it => {
+      if (it.slNo !== slNo) return it;
+      return {
+        ...it,
+        remainderTargetBoxNo: target
+      };
+    });
+    setSoData({ ...soData, items: nextItems });
+    setCustomCartons(null);
+    const targetLabel = target === 'mixed' ? 'Mixed Box (Auto)' : target === 'separate' ? 'Separate Dedicated Box' : `Box #${target}`;
+    setSuccessMessage(`Assigned loose remainder of Item #${slNo} to ${targetLabel}.`);
+  };
+
+  // Move an item from one carton to another directly in custom packing list
+  const handleMoveCartonItem = (sourceCartonIdx: number, itemIdx: number, targetCartonNo: number | 'new') => {
+    const list = getEditableCartonsClone();
+    if (!list[sourceCartonIdx] || !list[sourceCartonIdx].items[itemIdx]) return;
+
+    const movingItem = list[sourceCartonIdx].items.splice(itemIdx, 1)[0];
+    list[sourceCartonIdx].totalQty = list[sourceCartonIdx].items.reduce((sum, it) => sum + it.qty, 0);
+    list[sourceCartonIdx].isMixed = list[sourceCartonIdx].items.length > 1;
+
+    if (targetCartonNo === 'new') {
+      const nextNo = Math.max(0, ...list.map(c => c.cartonNo || 0)) + 1;
+      list.push({
+        id: `carton-moved-${Date.now()}`,
+        cartonNo: nextNo,
+        shippingMark: soData?.shippingMark || 'OKF/DISPATCH',
+        piNumber: soData?.piNumber || '1',
+        partyName: soData?.partyName || 'Customer',
+        items: [{ ...movingItem, slNo: 1 }],
+        totalQty: movingItem.qty,
+        grossWeightKg: movingItem.weightKg > 0 ? movingItem.weightKg : 10.00,
+        isMixed: false
+      });
+      setSuccessMessage(`Moved ${movingItem.cleanName} (${movingItem.qty} Pcs) to new Box #${nextNo}.`);
+    } else {
+      const targetCarton = list.find(c => c.cartonNo === targetCartonNo);
+      if (targetCarton) {
+        movingItem.slNo = targetCarton.items.length + 1;
+        targetCarton.items.push(movingItem);
+        targetCarton.totalQty += movingItem.qty;
+        targetCarton.grossWeightKg = Number((targetCarton.grossWeightKg + (movingItem.weightKg > 0 ? movingItem.weightKg : 0)).toFixed(2));
+        targetCarton.isMixed = targetCarton.items.length > 1;
+        setSuccessMessage(`Moved ${movingItem.cleanName} (${movingItem.qty} Pcs) to Box #${targetCartonNo}.`);
+      }
+    }
+
+    // If source carton is now empty, remove it
+    if (list[sourceCartonIdx].items.length === 0) {
+      list.splice(sourceCartonIdx, 1);
+    }
+
+    setCustomCartons(list);
+  };
+
   // Group cartons into pages (4 or 2 labels per A4 page) for printing
   const cartonPages = useMemo(() => {
     if (!activeSummary?.cartons) return [];
@@ -1738,6 +1797,46 @@ export const SalesDispatchView: React.FC = () => {
                             <span className="text-[10px] text-slate-500 font-bold whitespace-nowrap leading-none">
                               {boxBadge.subText}
                             </span>
+
+                            {/* Loose / Remainder Box Selector if remainder exists */}
+                            {(() => {
+                              const mcCap = (item.mcCapacity && item.mcCapacity > 0) ? item.mcCapacity : (item.unitsPerBox || curDispatchQty);
+                              const remainder = mcCap > 0 ? curDispatchQty % mcCap : 0;
+                              if (remainder <= 0 || isPromo) return null;
+
+                              const icCap = item.icCapacity || null;
+                              const icCount = icCap ? Math.ceil(remainder / icCap) : null;
+
+                              return (
+                                <div className="mt-1 pt-1 border-t border-dashed border-amber-300 dark:border-amber-700/60 w-full flex flex-col items-center">
+                                  <span className="text-[9px] font-black text-amber-700 dark:text-amber-400">
+                                    Loose: {remainder} Pcs {icCount ? `(${icCount} IC)` : ''}
+                                  </span>
+                                  <select
+                                    value={item.remainderTargetBoxNo !== undefined && item.remainderTargetBoxNo !== null ? String(item.remainderTargetBoxNo) : 'mixed'}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      if (val === 'mixed' || val === 'separate') {
+                                        handleUpdateRemainderTarget(item.slNo, val);
+                                      } else {
+                                        handleUpdateRemainderTarget(item.slNo, parseInt(val, 10));
+                                      }
+                                    }}
+                                    className="mt-0.5 text-[9px] font-bold rounded bg-amber-50 dark:bg-slate-800 border border-amber-300 dark:border-amber-700 text-slate-800 dark:text-slate-200 px-1 py-0.5 max-w-[120px] focus:outline-none cursor-pointer"
+                                    title="Choose which box to pack this remaining quantity into"
+                                  >
+                                    <option value="mixed">Pack in: Mixed Box (Default)</option>
+                                    <option value="separate">Pack in: Separate Box</option>
+                                    {activeSummary?.cartons.map(c => (
+                                      <option key={c.cartonNo} value={c.cartonNo}>
+                                        Pack in: Box #{c.cartonNo}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+                              );
+                            })()}
+
                             <button
                               type="button"
                               onClick={() => handleSelectBuilderItemAndScroll(item.slNo)}
@@ -2039,6 +2138,30 @@ export const SalesDispatchView: React.FC = () => {
                                 {/* Actions (no-print) */}
                                 <td className="py-1.5 px-2 text-center no-print">
                                   <div className="flex items-center justify-center gap-1">
+                                    {/* Move item to another box */}
+                                    <select
+                                      onChange={(e) => {
+                                        if (!e.target.value) return;
+                                        if (e.target.value === 'new') {
+                                          handleMoveCartonItem(cartonIdx, itemIdx, 'new');
+                                        } else {
+                                          handleMoveCartonItem(cartonIdx, itemIdx, parseInt(e.target.value, 10));
+                                        }
+                                        e.target.value = '';
+                                      }}
+                                      defaultValue=""
+                                      className="text-[9px] font-bold rounded border border-slate-300 bg-white dark:bg-slate-800 dark:border-slate-700 px-1 py-0.5 text-slate-700 dark:text-slate-300 focus:outline-none cursor-pointer"
+                                      title="Move this item to another box"
+                                    >
+                                      <option value="" disabled>Move ▾</option>
+                                      <option value="new">+ New Box</option>
+                                      {activeSummary.cartons.map(c => (
+                                        c.cartonNo !== carton.cartonNo ? (
+                                          <option key={c.cartonNo} value={c.cartonNo}>Box #{c.cartonNo}</option>
+                                        ) : null
+                                      ))}
+                                    </select>
+
                                     {isFirstItemOfCarton && (
                                       <>
                                         <button

@@ -503,6 +503,7 @@ export const generateCartonsAndPackagingList = (soData: SalesOrderData): Packing
     // 2A. AUTOMATIC MC-DRIVEN PACKING (Zero setup step needed!)
     // -------------------------------------------------------------------------
     const looseToolItems: Array<{ item: SalesOrderItem; qty: number; fraction: number; weight: number }> = [];
+    const explicitTargetRemainders: Array<{ targetBoxNo: number; item: SalesOrderItem; qty: number; weight: number }> = [];
 
     toolItems.forEach(item => {
       const totalQty = typeof item.dispatchQty === 'number' ? Math.round(item.dispatchQty) : Math.round(item.orderedQty);
@@ -544,14 +545,88 @@ export const generateCartonsAndPackagingList = (soData: SalesOrderData): Packing
       if (remainderQty > 0) {
         const fraction = remainderQty / mcCap;
         const partWeight = Number(((remainderQty / mcCap) * grossWtPerBox).toFixed(2));
-        looseToolItems.push({
-          item,
-          qty: remainderQty,
-          fraction,
-          weight: partWeight
-        });
+
+        if (item.remainderTargetBoxNo === 'separate') {
+          // Dedicated separate box for this remainder
+          const boxNum = currentCartonNo++;
+          cartons.push({
+            id: `carton-${boxNum}-${item.slNo}-remainder-sep`,
+            cartonNo: boxNum,
+            shippingMark: soData.shippingMark,
+            piNumber: soData.piNumber,
+            partyName: soData.partyName,
+            items: [{
+              id: `item-${boxNum}-${item.slNo}-rem`,
+              sourceItemSlNo: item.slNo,
+              slNo: 1,
+              rawName: item.rawItemName,
+              cleanName: item.cleanItemName,
+              size: item.size,
+              icInfo: item.icCapacity ? `${Math.ceil(remainderQty / item.icCapacity)} IC × ${item.icCapacity} Pcs` : undefined,
+              qty: remainderQty,
+              weightKg: partWeight > 0 ? partWeight : 5.00,
+              isPromoOrNonStock: false
+            }],
+            totalQty: remainderQty,
+            grossWeightKg: partWeight > 0 ? partWeight : 5.00,
+            isMixed: false
+          });
+        } else if (typeof item.remainderTargetBoxNo === 'number' && item.remainderTargetBoxNo > 0) {
+          explicitTargetRemainders.push({
+            targetBoxNo: item.remainderTargetBoxNo,
+            item,
+            qty: remainderQty,
+            weight: partWeight
+          });
+        } else {
+          // Default: Pack loose remainder into mixed carton
+          looseToolItems.push({
+            item,
+            qty: remainderQty,
+            fraction,
+            weight: partWeight
+          });
+        }
       }
     });
+
+    // Handle any remainders targeted to explicit box numbers
+    if (explicitTargetRemainders.length > 0) {
+      explicitTargetRemainders.forEach(rem => {
+        const targetCarton = cartons.find(c => c.cartonNo === rem.targetBoxNo);
+        const remItem: CartonItem = {
+          id: `item-box-${rem.targetBoxNo}-${rem.item.slNo}-rem`,
+          sourceItemSlNo: rem.item.slNo,
+          slNo: targetCarton ? targetCarton.items.length + 1 : 1,
+          rawName: rem.item.rawItemName,
+          cleanName: rem.item.cleanItemName,
+          size: rem.item.size,
+          icInfo: rem.item.icCapacity ? `${Math.ceil(rem.qty / rem.item.icCapacity)} IC × ${rem.item.icCapacity} Pcs` : undefined,
+          qty: rem.qty,
+          weightKg: rem.weight > 0 ? rem.weight : 5.00,
+          isPromoOrNonStock: false
+        };
+
+        if (targetCarton) {
+          targetCarton.items.push(remItem);
+          targetCarton.totalQty += rem.qty;
+          targetCarton.grossWeightKg = Number((targetCarton.grossWeightKg + (rem.weight > 0 ? rem.weight : 0)).toFixed(2));
+          targetCarton.isMixed = targetCarton.items.length > 1;
+        } else {
+          cartons.push({
+            id: `carton-${rem.targetBoxNo}-${rem.item.slNo}-target`,
+            cartonNo: rem.targetBoxNo,
+            shippingMark: soData.shippingMark,
+            piNumber: soData.piNumber,
+            partyName: soData.partyName,
+            items: [remItem],
+            totalQty: rem.qty,
+            grossWeightKg: rem.weight > 0 ? rem.weight : 5.00,
+            isMixed: false
+          });
+        }
+      });
+    }
 
     // Pack loose tool items into mixed cartons
     if (looseToolItems.length > 0) {
@@ -604,6 +679,7 @@ export const generateCartonsAndPackagingList = (soData: SalesOrderData): Packing
         finalizeMixedChunk(currentMixedChunk);
       }
     }
+    cartons.sort((a, b) => a.cartonNo - b.cartonNo);
   } else {
     // -------------------------------------------------------------------------
     // 2B. LEGACY / MANUAL BOX PACKING (When no explicit MC in SO)

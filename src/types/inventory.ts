@@ -140,6 +140,7 @@ export interface SalesOrderItem {
   mixedCartonNo?: number | null; // Shared carton number e.g. 7, 8
   mixedCartonGrossWeight?: number | null; // Shared carton gross weight
   assignedBoxNo?: number | null; // Direct box number assignment (e.g. 1, 2, 3...)
+  remainderTargetBoxNo?: number | 'mixed' | 'separate' | null; // Target carton for leftover ICs / remainder qty
 }
 
 export interface SalesOrderData {
