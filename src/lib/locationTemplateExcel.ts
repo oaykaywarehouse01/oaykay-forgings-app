@@ -31,17 +31,19 @@ export const downloadLocationStockTemplate = async (
     { key: 'cleanName', width: 44 },     // B: Item Name / Description
     { key: 'division', width: 13 },      // C: Division
     { key: 'mainCategory', width: 25 },  // D: Category
-    { key: 'locationCode', width: 20 },  // E: Primary Location Code
-    { key: 'countedQty', width: 18 },    // F: Physical Counted Qty
-    { key: 'secLocation', width: 20 },   // G: 2nd Location (If Split)
+    { key: 'locationCode', width: 18 },  // E: Location Code 1
+    { key: 'countedQty', width: 16 },    // F: Physical Counted Qty 1
+    { key: 'secLocation', width: 18 },   // G: 2nd Location (If Split)
     { key: 'secQty', width: 16 },        // H: 2nd Location Qty
-    { key: 'totalQty', width: 18 },      // I: Total Units Counted
-    { key: 'notes', width: 28 },         // J: Staff Notes / Shelf
+    { key: 'thirdLocation', width: 18 }, // I: 3rd Location (If Split)
+    { key: 'thirdQty', width: 16 },      // J: 3rd Location Qty
+    { key: 'totalQty', width: 18 },      // K: Total Units Counted
+    { key: 'notes', width: 28 },         // L: Staff Notes / Shelf
   ];
 
   // Row 1: Main Title
   const titleRow = ws1.addRow(['OAYKAY FORGINGS PVT LTD — WAREHOUSE PHYSICAL STOCK COUNT TEMPLATE']);
-  ws1.mergeCells('A1:J1');
+  ws1.mergeCells('A1:L1');
   titleRow.height = 36;
   const titleCell = ws1.getCell('A1');
   titleCell.font = { name: 'Segoe UI', size: 13, bold: true, color: { argb: 'FFFFFFFF' } };
@@ -49,8 +51,8 @@ export const downloadLocationStockTemplate = async (
   titleCell.alignment = { vertical: 'middle', horizontal: 'center' };
 
   // Row 2: Subtitle & Instructions
-  const subRow = ws1.addRow(['INSTRUCTIONS: 1) Columns A-D are pre-filled catalog SKUs. 2) Enter Location (Racks A1-G3, Pallets H1+, Bins BIN-1+) & Qty in YELLOW columns. 3) To onboard a brand new item, fill details in bottom rows.']);
-  ws1.mergeCells('A2:J2');
+  const subRow = ws1.addRow(['INSTRUCTIONS: 1) Columns A-D are pre-filled catalog SKUs. 2) Enter Locations (Racks A1-G3, Pallets H1+, Bins BIN-1+) & Qty in YELLOW columns. 3) Supports up to 3 locations per SKU (or add another row for 4+ locations).']);
+  ws1.mergeCells('A2:L2');
   subRow.height = 24;
   const subCell = ws1.getCell('A2');
   subCell.font = { name: 'Segoe UI', size: 9, italic: true, color: { argb: 'FFCBD5E1' } };
@@ -67,12 +69,14 @@ export const downloadLocationStockTemplate = async (
     'Item Description / Part Name',
     'Division',
     'Category',
-    'Location Code (E)',
-    'Counted Qty (F)',
+    'Location 1 (E)',
+    'Qty 1 (F)',
     '2nd Location (G)',
     '2nd Qty (H)',
-    'Total Counted (I)',
-    'Auditor Notes / Shelf (J)'
+    '3rd Location (I)',
+    '3rd Qty (J)',
+    'Total Counted (K)',
+    'Auditor Notes / Shelf (L)'
   ]);
   headerRow.height = 30;
 
@@ -86,14 +90,18 @@ export const downloadLocationStockTemplate = async (
     };
 
     if (colNumber === 5 || colNumber === 6) {
-      // Input columns: Soft Amber / Warm Yellow
+      // Primary location input: Soft Amber / Warm Yellow
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF3C7' } };
       cell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: 'FF92400E' } };
     } else if (colNumber === 7 || colNumber === 8) {
       // 2nd location: Light Slate
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
       cell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: 'FF334155' } };
-    } else if (colNumber === 9) {
+    } else if (colNumber === 9 || colNumber === 10) {
+      // 3rd location: Soft Indigo/Blue
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEEF2FF' } };
+      cell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: 'FF3730A3' } };
+    } else if (colNumber === 11) {
       // Total column: Soft Emerald
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD1FAE5' } };
       cell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: 'FF065F46' } };
@@ -116,7 +124,9 @@ export const downloadLocationStockTemplate = async (
       '',
       '',
       '',
-      { formula: `SUM(F${rowNum},H${rowNum})` },
+      '',
+      '',
+      { formula: `SUM(F${rowNum},H${rowNum},J${rowNum})` },
       ''
     ]);
     row.height = 22;
@@ -153,23 +163,19 @@ export const downloadLocationStockTemplate = async (
         cell.alignment = { vertical: 'middle', horizontal: 'left' };
         cell.font = { name: 'Segoe UI', size: 9, color: { argb: 'FF334155' } };
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bgNeutral } };
-      } else if (colNumber === 5) {
+      } else if (colNumber === 5 || colNumber === 7 || colNumber === 9) {
+        // Location code columns
         cell.alignment = { vertical: 'middle', horizontal: 'center' };
-        cell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: 'FF0F172A' } };
+        cell.font = { name: 'Segoe UI', size: 9.5, bold: true, color: { argb: 'FF0F172A' } };
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFBEB' } }; // Soft light amber
-      } else if (colNumber === 6) {
+      } else if (colNumber === 6 || colNumber === 8 || colNumber === 10) {
+        // Qty columns
         cell.alignment = { vertical: 'middle', horizontal: 'right' };
-        cell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: 'FF0F172A' } };
+        cell.font = { name: 'Segoe UI', size: 9.5, bold: true, color: { argb: 'FF0F172A' } };
         cell.numFmt = '#,##0';
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFBEB' } };
-      } else if (colNumber === 7) {
-        cell.alignment = { vertical: 'middle', horizontal: 'center' };
-        cell.font = { name: 'Segoe UI', size: 9.5, color: { argb: 'FF334155' } };
-      } else if (colNumber === 8) {
-        cell.alignment = { vertical: 'middle', horizontal: 'right' };
-        cell.font = { name: 'Segoe UI', size: 9.5, color: { argb: 'FF334155' } };
-        cell.numFmt = '#,##0';
-      } else if (colNumber === 9) {
+      } else if (colNumber === 11) {
+        // Total column
         cell.alignment = { vertical: 'middle', horizontal: 'right' };
         cell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: 'FF047857' } };
         cell.numFmt = '#,##0';
@@ -193,7 +199,9 @@ export const downloadLocationStockTemplate = async (
       '',
       '',
       '',
-      { formula: `SUM(F${rowNum},H${rowNum})` },
+      '',
+      '',
+      { formula: `SUM(F${rowNum},H${rowNum},J${rowNum})` },
       'Brand new SKU entered by staff'
     ]);
     row.height = 22;
@@ -208,7 +216,7 @@ export const downloadLocationStockTemplate = async (
         cell.alignment = { vertical: 'middle', horizontal: 'center' };
         cell.font = { name: 'Consolas', size: 9, bold: true, color: { argb: 'FF2563EB' } };
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEFF6FF' } };
-      } else if (colNumber === 9) {
+      } else if (colNumber === 11) {
         cell.alignment = { vertical: 'middle', horizontal: 'right' };
         cell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: 'FF047857' } };
         cell.numFmt = '#,##0';
@@ -452,8 +460,18 @@ export const parseUploadedLocationStockExcel = async (
             const loc2 = normalizeLocationCode(row[6]);
             const qty2 = Math.round(parseFloat(String(row[7] || '0')) || 0);
 
+            // Check for 3rd location (12-column layout)
+            const loc3 = normalizeLocationCode(row[8]);
+            const qty3 = Math.round(parseFloat(String(row[9] || '0')) || 0);
+
             if (loc1 && qty1 > 0) pairs.push({ loc: loc1, qty: qty1 });
             if (loc2 && qty2 > 0) pairs.push({ loc: loc2, qty: qty2 });
+            if (loc3 && qty3 > 0) {
+              pairs.push({ loc: loc3, qty: qty3 });
+              notes = String(row[11] || '').trim();
+            } else {
+              notes = String(row[11] || row[9] || '').trim();
+            }
           } else {
             // Legacy 14-column layout
             // Col 0: SKU, Col 1: Div, Col 2: Main, Col 3: Sub, Col 4: Name
