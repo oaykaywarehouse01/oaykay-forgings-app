@@ -843,6 +843,10 @@ export const SalesDispatchView: React.FC = () => {
     } else {
       const targetCarton = list.find(c => c.cartonNo === targetCartonNo);
       if (targetCarton) {
+        if (targetCarton.isFullMasterCarton) {
+          setUploadError(`Cannot move items into Box #${targetCartonNo}: it is a sealed, full single-SKU Master Carton.`);
+          return;
+        }
         movingItem.slNo = targetCarton.items.length + 1;
         targetCarton.items.push(movingItem);
         targetCarton.totalQty += movingItem.qty;
@@ -1827,11 +1831,13 @@ export const SalesDispatchView: React.FC = () => {
                                   >
                                     <option value="mixed">Pack in: Mixed Box (Default)</option>
                                     <option value="separate">Pack in: Separate Box</option>
-                                    {activeSummary?.cartons.map(c => (
-                                      <option key={c.cartonNo} value={c.cartonNo}>
-                                        Pack in: Box #{c.cartonNo}
-                                      </option>
-                                    ))}
+                                    {activeSummary?.cartons
+                                      .filter(c => !c.isFullMasterCarton)
+                                      .map(c => (
+                                        <option key={c.cartonNo} value={c.cartonNo}>
+                                          Pack in: Box #{c.cartonNo} (Mixed)
+                                        </option>
+                                      ))}
                                   </select>
                                 </div>
                               );
@@ -2066,7 +2072,7 @@ export const SalesDispatchView: React.FC = () => {
                                 {/* Carton No (Editable on first row of carton) */}
                                 <td className="py-2 px-2 text-center font-bold text-slate-900 dark:text-white border-r border-slate-200 dark:border-slate-700">
                                   {isFirstItemOfCarton ? (
-                                    <div className="flex items-center justify-center">
+                                    <div className="flex flex-col items-center justify-center gap-1">
                                       <input
                                         type="number"
                                         min={1}
@@ -2080,6 +2086,15 @@ export const SalesDispatchView: React.FC = () => {
                                         className="w-16 sm:w-20 rounded-lg border border-slate-300 bg-white dark:bg-slate-800 dark:border-slate-600 px-2 py-1 text-center font-mono font-black text-orange-600 dark:text-orange-400 text-xs sm:text-sm focus:border-orange-500 focus:ring-1 focus:ring-orange-500 shadow-2xs"
                                         title="Click to edit carton number"
                                       />
+                                      {carton.isFullMasterCarton ? (
+                                        <span className="rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 text-[8px] font-black px-1.5 py-0.2 tracking-tight uppercase whitespace-nowrap">
+                                          ✓ Sealed Master
+                                        </span>
+                                      ) : carton.isMixed ? (
+                                        <span className="rounded bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 text-[8px] font-black px-1.5 py-0.2 tracking-tight uppercase whitespace-nowrap">
+                                          Mixed Box
+                                        </span>
+                                      ) : null}
                                     </div>
                                   ) : (
                                     <span className="text-slate-300 dark:text-slate-600 font-mono">↳</span>
@@ -2157,7 +2172,15 @@ export const SalesDispatchView: React.FC = () => {
                                       <option value="new">+ New Box</option>
                                       {activeSummary.cartons.map(c => (
                                         c.cartonNo !== carton.cartonNo ? (
-                                          <option key={c.cartonNo} value={c.cartonNo}>Box #{c.cartonNo}</option>
+                                          c.isFullMasterCarton ? (
+                                            <option key={c.cartonNo} value="" disabled>
+                                              Box #{c.cartonNo} (Locked - Sealed Master)
+                                            </option>
+                                          ) : (
+                                            <option key={c.cartonNo} value={c.cartonNo}>
+                                              Box #{c.cartonNo} (Mixed)
+                                            </option>
+                                          )
                                         ) : null
                                       ))}
                                     </select>

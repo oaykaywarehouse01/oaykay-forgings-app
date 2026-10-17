@@ -538,7 +538,8 @@ export const generateCartonsAndPackagingList = (soData: SalesOrderData): Packing
           }],
           totalQty: mcCap,
           grossWeightKg: grossWtPerBox,
-          isMixed: false
+          isMixed: false,
+          isFullMasterCarton: true // 100% full sealed single-SKU master carton (NO mixed items allowed)
         });
       }
 
@@ -569,7 +570,8 @@ export const generateCartonsAndPackagingList = (soData: SalesOrderData): Packing
             }],
             totalQty: remainderQty,
             grossWeightKg: partWeight > 0 ? partWeight : 5.00,
-            isMixed: false
+            isMixed: false,
+            isFullMasterCarton: false
           });
         } else if (typeof item.remainderTargetBoxNo === 'number' && item.remainderTargetBoxNo > 0) {
           explicitTargetRemainders.push({
@@ -594,35 +596,52 @@ export const generateCartonsAndPackagingList = (soData: SalesOrderData): Packing
     if (explicitTargetRemainders.length > 0) {
       explicitTargetRemainders.forEach(rem => {
         const targetCarton = cartons.find(c => c.cartonNo === rem.targetBoxNo);
-        const remItem: CartonItem = {
-          id: `item-box-${rem.targetBoxNo}-${rem.item.slNo}-rem`,
-          sourceItemSlNo: rem.item.slNo,
-          slNo: targetCarton ? targetCarton.items.length + 1 : 1,
-          rawName: rem.item.rawItemName,
-          cleanName: rem.item.cleanItemName,
-          size: rem.item.size,
-          icInfo: rem.item.icCapacity ? `${Math.ceil(rem.qty / rem.item.icCapacity)} IC × ${rem.item.icCapacity} Pcs` : undefined,
-          qty: rem.qty,
-          weightKg: rem.weight > 0 ? rem.weight : 5.00,
-          isPromoOrNonStock: false
-        };
+        // STRICT RULE: If targetCarton is a full master carton (100% sealed single-SKU), NEVER mix items into it!
+        // Instead, allocate to a dedicated separate carton so full master cartons remain 100% sealed and pure.
+        const canMergeIntoTarget = targetCarton && !targetCarton.isFullMasterCarton;
 
-        if (targetCarton) {
+        if (canMergeIntoTarget && targetCarton) {
+          const remItem: CartonItem = {
+            id: `item-box-${rem.targetBoxNo}-${rem.item.slNo}-rem`,
+            sourceItemSlNo: rem.item.slNo,
+            slNo: targetCarton.items.length + 1,
+            rawName: rem.item.rawItemName,
+            cleanName: rem.item.cleanItemName,
+            size: rem.item.size,
+            icInfo: rem.item.icCapacity ? `${Math.ceil(rem.qty / rem.item.icCapacity)} IC × ${rem.item.icCapacity} Pcs` : undefined,
+            qty: rem.qty,
+            weightKg: rem.weight > 0 ? rem.weight : 5.00,
+            isPromoOrNonStock: false
+          };
           targetCarton.items.push(remItem);
           targetCarton.totalQty += rem.qty;
           targetCarton.grossWeightKg = Number((targetCarton.grossWeightKg + (rem.weight > 0 ? rem.weight : 0)).toFixed(2));
           targetCarton.isMixed = targetCarton.items.length > 1;
         } else {
+          // Create a new separate carton so sealed master cartons are NEVER violated
+          const newBoxNo = currentCartonNo++;
           cartons.push({
-            id: `carton-${rem.targetBoxNo}-${rem.item.slNo}-target`,
-            cartonNo: rem.targetBoxNo,
+            id: `carton-${newBoxNo}-${rem.item.slNo}-separate`,
+            cartonNo: newBoxNo,
             shippingMark: soData.shippingMark,
             piNumber: soData.piNumber,
             partyName: soData.partyName,
-            items: [remItem],
+            items: [{
+              id: `item-box-${newBoxNo}-${rem.item.slNo}-rem`,
+              sourceItemSlNo: rem.item.slNo,
+              slNo: 1,
+              rawName: rem.item.rawItemName,
+              cleanName: rem.item.cleanItemName,
+              size: rem.item.size,
+              icInfo: rem.item.icCapacity ? `${Math.ceil(rem.qty / rem.item.icCapacity)} IC × ${rem.item.icCapacity} Pcs` : undefined,
+              qty: rem.qty,
+              weightKg: rem.weight > 0 ? rem.weight : 5.00,
+              isPromoOrNonStock: false
+            }],
             totalQty: rem.qty,
             grossWeightKg: rem.weight > 0 ? rem.weight : 5.00,
-            isMixed: false
+            isMixed: false,
+            isFullMasterCarton: false
           });
         }
       });

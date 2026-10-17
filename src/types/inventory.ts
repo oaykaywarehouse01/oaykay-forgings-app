@@ -179,6 +179,7 @@ export interface Carton {
   totalQty: number; // Whole integer sum
   grossWeightKg: number; // Gross weight in kg (2 decimals)
   isMixed: boolean;
+  isFullMasterCarton?: boolean; // True if carton is a 100% full single-SKU master box (no mixed goods allowed)
 }
 
 export interface PackingListSummary {
