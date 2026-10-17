@@ -17,7 +17,7 @@ import {
   AppUser
 } from '../types/inventory';
 import { InventorySearchEngine } from '../lib/searchEngine';
-import { generateInitialWarehouseLocations, normalizeLocationCode, isMockLocationCode } from '../lib/locationUtils';
+import { generateInitialWarehouseLocations, normalizeLocationCode, isMockLocationCode, getLocationDescription } from '../lib/locationUtils';
 import * as XLSX from 'xlsx';
 
 export interface DeductedSOInfo {
@@ -324,9 +324,15 @@ const getInitialState = () => {
           divisions: parsed.divisions as Record<DivisionCode, DivisionInfo>,
           transactions: sanitizedTxns,
           deductedSalesOrders: (parsed.deductedSalesOrders || {}) as Record<string, DeductedSOInfo>,
-          warehouseLocations: (parsed.warehouseLocations && parsed.warehouseLocations.length > 0)
+          warehouseLocations: ((parsed.warehouseLocations && parsed.warehouseLocations.length > 0)
             ? parsed.warehouseLocations as WarehouseLocation[]
-            : generateInitialWarehouseLocations(),
+            : generateInitialWarehouseLocations()
+          ).map(l => ({
+            ...l,
+            description: (l.description && !l.description.startsWith('Location ') && l.description !== l.code)
+              ? l.description
+              : getLocationDescription(l.code, l.description)
+          })),
           locationStockEntries: (parsed.locationStockEntries || []) as LocationStockEntry[],
           countSession: (parsed.countSession || {
             startDate: new Date().toISOString().slice(0, 10),
@@ -1424,7 +1430,7 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
         code: normLoc,
         type: normLoc.startsWith('BIN') ? 'BIN' : (normLoc.match(/^[A-G]/) ? 'RACK' : 'PALLET'),
         zone: normLoc.startsWith('BIN') ? 'Storage Bins' : (normLoc.match(/^[A-G]/) ? `Rack ${normLoc.charAt(0)}` : `Line ${normLoc.charAt(0)}`),
-        description: `Custom Storage Location ${normLoc}`
+        description: getLocationDescription(normLoc)
       });
     }
 
@@ -1469,7 +1475,7 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
           code: normLoc,
           type: normLoc.startsWith('BIN') ? 'BIN' : (normLoc.match(/^[A-G]/) ? 'RACK' : 'PALLET'),
           zone: normLoc.startsWith('BIN') ? 'Storage Bins' : (normLoc.match(/^[A-G]/) ? `Rack ${normLoc.charAt(0)}` : `Line ${normLoc.charAt(0)}`),
-          description: `Location ${normLoc}`
+          description: getLocationDescription(normLoc)
         });
       }
     });

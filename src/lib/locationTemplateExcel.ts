@@ -1,7 +1,7 @@
 import ExcelJS from 'exceljs';
 import * as XLSX from 'xlsx';
 import { SkuItem, WarehouseLocation, CategoryGroup, DivisionCode } from '../types/inventory';
-import { normalizeLocationCode, isMockLocationCode } from './locationUtils';
+import { normalizeLocationCode, isMockLocationCode, getLocationDescription, getLocationZone } from './locationUtils';
 
 /**
  * Generates and downloads the official OKF 3-Sheet Location-Wise Stock Template
@@ -383,6 +383,7 @@ export interface ParsedLocationStockResult {
     division: DivisionCode;
     mainCategory: string;
     locationCode: string;
+    locationDescription?: string;
     countedQty: number;
     countedBy: string;
     notes?: string;
@@ -400,8 +401,13 @@ export interface ParsedLocationStockResult {
 }
 
 /**
- * Parses uploaded Location Stock Excel file
- * Supports both new 10-column layout and legacy 14-column layout
+ * Universal, intelligent parser for uploaded Location Stock Excel files.
+ * Automatically adapts to:
+ * - 16-column 5-location template (Cols E to N)
+ * - 12-column 3-location template
+ * - 10-column 2-location template
+ * - Legacy 14-column layout
+ * - Any user-rearranged column layouts using dynamic header analysis
  */
 export const parseUploadedLocationStockExcel = async (
   file: File,
@@ -415,122 +421,207 @@ export const parseUploadedLocationStockExcel = async (
         const buffer = e.target?.result;
         const wb = XLSX.read(buffer, { type: 'binary', cellFormula: true, cellStyles: true });
 
-        // Prefer sheet named 'Location Stock Entry' or first sheet
-        const sheetName = wb.SheetNames.find(n => n.toLowerCase().includes('location stock') || n.toLowerCase().includes('entry')) || wb.SheetNames[0];
-        const ws = wb.Sheets[sheetName];
+        // Prefer sheet named 'Location Stock Entry', 'Location', or first sheet
+        const sheetName = wb.SheetNames.find(n => {
+          const l = n.toLowerCase();
+          return l.includes('location stock') || l.includes('entry') || l.includes('stock');
+        }) || wb.SheetNames[0];
 
-        const rows: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
-        if (rows.length < 4) {
-          throw new Error('Excel sheet does not have enough rows or is missing header row.');
+        const ws = wb.Sheets[sheetName];
+        if (!ws) {
+          throw new Error('Could not find a valid worksheet in the uploaded Excel file.');
         }
 
-        // Find header row (usually contains 'SKU Code' or 'Location')
-        let headerRowIdx = 3;
-        for (let r = 0; r < Math.min(rows.length, 10); r++) {
-          const rowStr = (rows[r] || []).join(' ').toLowerCase();
-          if (rowStr.includes('sku code') || rowStr.includes('clean item name') || rowStr.includes('location code') || rowStr.includes('location 1')) {
+        // Convert worksheet to 2D array with formula values evaluated
+        const rows: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
+        if (rows.length < 3) {
+          throw new Error('Excel sheet does not have enough rows or data.');
+        }
+
+        // 1. Locate the Column Headers row (usually row 3 or 4, or first row with "SKU" / "Location")
+        let headerRowIdx = -1;
+        for (let r = 0; r < Math.min(rows.length, 12); r++) {
+          const rowStr = (rows[r] || []).map(c => String(c || '').toLowerCase()).join(' ');
+          if (
+            (rowStr.includes('sku') || rowStr.includes('part name') || rowStr.includes('item description')) &&
+            (rowStr.includes('location') || rowStr.includes('qty') || rowStr.includes('count'))
+          ) {
             headerRowIdx = r;
             break;
           }
         }
 
-        // Detect if this is new 10-column layout or legacy 14-column layout
-        const headerRow = (rows[headerRowIdx] || []).map(c => String(c).toLowerCase());
-        const isNewFormat = headerRow.length <= 11 || headerRow.some(h => h.includes('location code (e)') || h.includes('counted qty (f)'));
+        // Fallback search if strict match fails
+        if (headerRowIdx === -1) {
+          for (let r = 0; r < Math.min(rows.length, 12); r++) {
+            const rowStr = (rows[r] || []).map(c => String(c || '').toLowerCase()).join(' ');
+            if (rowStr.includes('sku') || rowStr.includes('location')) {
+              headerRowIdx = r;
+              break;
+            }
+          }
+        }
 
-        // Create quick lookup maps for existing SKUs
-        const skuByCode = new Map<string, SkuItem>();
-        const skuByName = new Map<string, SkuItem>();
+        if (headerRowIdx === -1) {
+          headerRowIdx = 3; // Default to row 4 (index 3) of official template
+        }
 
-        existingSkus.forEach(s => {
-          skuByCode.set(s.sku_code.toUpperCase().trim(), s);
-          skuByName.set(s.clean_name.toLowerCase().replace(/[\s_]/g, ''), s);
+        const headerCells = (rows[headerRowIdx] || []).map(c => String(c || '').toLowerCase().trim());
+
+        // 2. Dynamically identify key column positions
+        let skuCol = -1;
+        let nameCol = -1;
+        let divCol = -1;
+        let catCol = -1;
+        let notesCol = -1;
+
+        headerCells.forEach((h, colIdx) => {
+          if (skuCol === -1 && (h.includes('sku') || (h.includes('code') && !h.includes('location')))) {
+            skuCol = colIdx;
+          } else if (nameCol === -1 && (h.includes('description') || h.includes('part name') || h.includes('item name') || h.includes('clean name'))) {
+            nameCol = colIdx;
+          } else if (divCol === -1 && (h.includes('division') || h === 'div')) {
+            divCol = colIdx;
+          } else if (catCol === -1 && (h.includes('category') || h === 'cat')) {
+            catCol = colIdx;
+          } else if (notesCol === -1 && (h.includes('note') || h.includes('remark') || h.includes('auditor'))) {
+            notesCol = colIdx;
+          }
         });
 
-        const existingLocSet = new Set(existingLocations.map(l => l.code));
+        // 3. Dynamically discover all Location & Qty pairs
+        const pairsConfig: Array<{ locCol: number; qtyCol: number }> = [];
+
+        // Check for numbered locations (1 to 5)
+        for (let num = 1; num <= 5; num++) {
+          const numStr = String(num);
+          const ordinal = num === 1 ? '1st' : num === 2 ? '2nd' : num === 3 ? '3rd' : num === 4 ? '4th' : '5th';
+          const letter = num === 1 ? '(e)' : num === 2 ? '(g)' : num === 3 ? '(i)' : num === 4 ? '(k)' : '(m)';
+          const qtyLetter = num === 1 ? '(f)' : num === 2 ? '(h)' : num === 3 ? '(j)' : num === 4 ? '(l)' : '(n)';
+
+          const locIdx = headerCells.findIndex(h => 
+            (h.includes('loc') && (h.includes(numStr) || h.includes(ordinal) || h.includes(letter))) ||
+            (num === 1 && (h.includes('primary location') || h === 'location code' || h === 'location'))
+          );
+
+          let qtyIdx = headerCells.findIndex(h => 
+            (h.includes('qty') || h.includes('count') || h.includes('quantity')) &&
+            (h.includes(numStr) || h.includes(ordinal) || h.includes(qtyLetter))
+          );
+
+          // If qtyIdx not found explicitly by number, but locIdx is found, check if locIdx + 1 is the qty
+          if (locIdx !== -1 && qtyIdx === -1 && locIdx + 1 < headerCells.length) {
+            qtyIdx = locIdx + 1;
+          }
+
+          if (locIdx !== -1 && qtyIdx !== -1 && locIdx !== qtyIdx) {
+            pairsConfig.push({ locCol: locIdx, qtyCol: qtyIdx });
+          }
+        }
+
+        // If no numbered pairs were found via headers, use positional fallback
+        if (pairsConfig.length === 0) {
+          // Check standard 16-column template: cols (4,5), (6,7), (8,9), (10,11), (12,13)
+          if (headerCells.length >= 6) {
+            for (let c = 4; c <= Math.min(headerCells.length - 2, 12); c += 2) {
+              pairsConfig.push({ locCol: c, qtyCol: c + 1 });
+            }
+          } else if (headerCells.length >= 2) {
+            pairsConfig.push({ locCol: 0, qtyCol: 1 });
+          }
+        }
+
+        // Set fallbacks for SKU and Name columns if not matched
+        if (skuCol === -1) skuCol = 0;
+        if (nameCol === -1) nameCol = 1;
+        if (divCol === -1) divCol = 2;
+        if (catCol === -1) catCol = 3;
+
+        // 4. Create robust SKU lookup indexes
+        const skuByCode = new Map<string, SkuItem>();
+        const skuByCleanCode = new Map<string, SkuItem>();
+        const skuByName = new Map<string, SkuItem>();
+        const skuByTallyName = new Map<string, SkuItem>();
+
+        existingSkus.forEach(s => {
+          const upperCode = s.sku_code.toUpperCase().trim();
+          skuByCode.set(upperCode, s);
+          skuByCleanCode.set(upperCode.replace(/[\s\-_]/g, ''), s);
+
+          const nameKey = s.clean_name.toLowerCase().replace(/[^a-z0-9]/g, '');
+          if (nameKey) skuByName.set(nameKey, s);
+
+          if (s.original_tally_name) {
+            const tallyKey = s.original_tally_name.toLowerCase().replace(/[^a-z0-9]/g, '');
+            if (tallyKey) skuByTallyName.set(tallyKey, s);
+          }
+        });
+
+        // Location lookup for description
+        const existingLocMap = new Map<string, WarehouseLocation>();
+        existingLocations.forEach(l => existingLocMap.set(l.code, l));
+
         const entries: ParsedLocationStockResult['entries'] = [];
         const newSkusToAdd: ParsedLocationStockResult['newSkusToAdd'] = [];
         const newLocationsDiscoveredSet = new Set<string>();
         let totalUnitsCounted = 0;
 
+        // 5. Parse Data Rows
         for (let r = headerRowIdx + 1; r < rows.length; r++) {
           const row = rows[r] || [];
-          const rawCode = String(row[0] || '').trim();
-
-          let rawName = '';
-          let rawDiv: DivisionCode = 'DIM';
-          let rawMainCat = '';
-          let rawSubCat = '';
-          let notes = '';
-          const pairs: Array<{ loc: string; qty: number }> = [];
-
-          if (isNewFormat) {
-            // New layout (supports 2 to 5 locations: cols 4/5, 6/7, 8/9, 10/11, 12/13)
-            rawName = String(row[1] || '').trim();
-            const divCandidate = String(row[2] || '').trim().toUpperCase();
-            if (divCandidate === 'DIM' || divCandidate === 'DIN' || divCandidate === 'DTR') {
-              rawDiv = divCandidate as DivisionCode;
-            }
-            rawMainCat = String(row[3] || '').trim();
-
-            // Loop through up to 5 location & quantity pairs
-            for (let c = 4; c <= 12; c += 2) {
-              const loc = normalizeLocationCode(row[c]);
-              const qty = Math.round(parseFloat(String(row[c + 1] || '0')) || 0);
-              if (loc && qty > 0) {
-                pairs.push({ loc, qty });
-              }
-            }
-
-            notes = String(row[15] || row[13] || row[11] || row[9] || '').trim();
-          } else {
-            // Legacy 14-column layout
-            // Col 0: SKU, Col 1: Div, Col 2: Main, Col 3: Sub, Col 4: Name
-            // Col 6: Loc 1, Col 7: Qty 1, Col 8: Loc 2, Col 9: Qty 2, Col 10: Loc 3, Col 11: Qty 3
-            const divCandidate = String(row[1] || '').trim().toUpperCase();
-            if (divCandidate === 'DIM' || divCandidate === 'DIN' || divCandidate === 'DTR') {
-              rawDiv = divCandidate as DivisionCode;
-            }
-            rawMainCat = String(row[2] || '').trim();
-            rawSubCat = String(row[3] || '').trim();
-            rawName = String(row[4] || '').trim();
-            notes = String(row[13] || '').trim();
-
-            const loc1 = normalizeLocationCode(row[6]);
-            const qty1 = Math.round(parseFloat(String(row[7] || '0')) || 0);
-
-            const loc2 = normalizeLocationCode(row[8]);
-            const qty2 = Math.round(parseFloat(String(row[9] || '0')) || 0);
-
-            const loc3 = normalizeLocationCode(row[10]);
-            const qty3 = Math.round(parseFloat(String(row[11] || '0')) || 0);
-
-            if (loc1 && qty1 > 0) pairs.push({ loc: loc1, qty: qty1 });
-            if (loc2 && qty2 > 0) pairs.push({ loc: loc2, qty: qty2 });
-            if (loc3 && qty3 > 0) pairs.push({ loc: loc3, qty: qty3 });
-          }
+          const rawCode = String(row[skuCol] || '').trim();
+          const rawName = String(row[nameCol] || '').trim();
+          const rawDivCand = String(row[divCol] || '').trim().toUpperCase();
+          const rawDiv: DivisionCode = (rawDivCand === 'DIM' || rawDivCand === 'DIN' || rawDivCand === 'DTR') ? rawDivCand as DivisionCode : 'DIM';
+          const rawMainCat = String(row[catCol] || '').trim();
+          const notes = notesCol !== -1 ? String(row[notesCol] || '').trim() : '';
 
           // Skip completely empty rows
           if (!rawCode && !rawName) continue;
+
+          // Parse all location & qty pairs in this row
+          const pairs: Array<{ loc: string; qty: number }> = [];
+
+          pairsConfig.forEach(({ locCol, qtyCol }) => {
+            const locVal = row[locCol];
+            const qtyVal = row[qtyCol];
+
+            const loc = normalizeLocationCode(locVal);
+            const qtyStr = String(qtyVal || '0').replace(/,/g, '').trim();
+            const parsedQty = Math.round(parseFloat(qtyStr) || 0);
+
+            if (loc && parsedQty > 0) {
+              pairs.push({ loc, qty: parsedQty });
+            }
+          });
+
+          // If no location counts on this row, skip
           if (pairs.length === 0) continue;
 
-          // Check if this is an existing SKU
+          // Match SKU:
           let matchedSku: SkuItem | undefined = undefined;
           if (rawCode && !rawCode.startsWith('[NEW-') && !rawCode.startsWith('[AUTO-NEW-')) {
             matchedSku = skuByCode.get(rawCode.toUpperCase());
-          }
-          if (!matchedSku && rawName) {
-            matchedSku = skuByName.get(rawName.toLowerCase().replace(/[\s_]/g, ''));
+            if (!matchedSku) {
+              matchedSku = skuByCleanCode.get(rawCode.toUpperCase().replace(/[\s\-_]/g, ''));
+            }
           }
 
+          if (!matchedSku && rawName) {
+            const nameKey = rawName.toLowerCase().replace(/[^a-z0-9]/g, '');
+            matchedSku = skuByName.get(nameKey) || skuByTallyName.get(nameKey);
+          }
+
+          // Register new locations discovered
           pairs.forEach(p => {
-            if (!existingLocSet.has(p.loc)) {
+            if (!existingLocMap.has(p.loc)) {
               newLocationsDiscoveredSet.add(p.loc);
             }
           });
 
           if (matchedSku) {
             pairs.forEach(p => {
+              const locDesc = existingLocMap.get(p.loc)?.description || getLocationDescription(p.loc);
               entries.push({
                 skuId: matchedSku!.id,
                 skuCode: matchedSku!.sku_code,
@@ -538,6 +629,7 @@ export const parseUploadedLocationStockExcel = async (
                 division: matchedSku!.division,
                 mainCategory: matchedSku!.main_category,
                 locationCode: p.loc,
+                locationDescription: locDesc,
                 countedQty: p.qty,
                 countedBy: 'Excel Bulk Upload',
                 notes: notes || undefined
@@ -545,26 +637,28 @@ export const parseUploadedLocationStockExcel = async (
               totalUnitsCounted += p.qty;
             });
           } else if (rawName) {
-            // Brand new item discovered in bottom rows!
+            // New SKU found in bottom rows
             const totalQty = pairs.reduce((sum, p) => sum + p.qty, 0);
 
             newSkusToAdd.push({
               clean_name: rawName,
               division: rawDiv,
-              main_category: rawMainCat || 'General Tools',
-              sub_category: rawSubCat || rawMainCat || 'General Tools',
+              main_category: rawMainCat || 'General Warehouse',
+              sub_category: rawMainCat || 'General Warehouse',
               initial_stock: totalQty,
               location_bin: pairs.map(p => `${p.loc} (${p.qty})`).join(', ')
             });
 
             pairs.forEach(p => {
+              const locDesc = existingLocMap.get(p.loc)?.description || getLocationDescription(p.loc);
               entries.push({
                 skuId: `new-sku-${entries.length}`,
-                skuCode: `NEW-${entries.length + 1}`,
+                skuCode: rawCode && !rawCode.startsWith('[NEW-') ? rawCode : `NEW-${entries.length + 1}`,
                 cleanName: rawName,
                 division: rawDiv,
-                mainCategory: rawMainCat || 'General Tools',
+                mainCategory: rawMainCat || 'General Warehouse',
                 locationCode: p.loc,
+                locationDescription: locDesc,
                 countedQty: p.qty,
                 countedBy: 'Excel Bulk Upload',
                 notes: notes || 'New SKU from Excel'

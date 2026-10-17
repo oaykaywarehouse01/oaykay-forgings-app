@@ -29,7 +29,9 @@ import {
   normalizeLocationCode, 
   createNewSteelRackLocations, 
   createNewPalletLineLocations, 
-  createNewBinRange 
+  createNewBinRange,
+  getLocationDescription,
+  getLocationZone
 } from '../lib/locationUtils';
 import { 
   downloadLocationStockTemplate, 
@@ -118,6 +120,15 @@ export const LocationStockView: React.FC = () => {
     setTimeout(() => setStatusMessage(null), 5000);
   };
 
+  // Quick lookup map for physical location descriptions
+  const locationDescMap = useMemo(() => {
+    const map = new Map<string, string>();
+    warehouseLocations.forEach(loc => {
+      map.set(loc.code, loc.description || getLocationDescription(loc.code));
+    });
+    return map;
+  }, [warehouseLocations]);
+
   // Aggregated units and SKU counts per location
   const locationStatsMap = useMemo(() => {
     const map = new Map<string, { skuCount: number; totalUnits: number }>();
@@ -133,17 +144,37 @@ export const LocationStockView: React.FC = () => {
     return map;
   }, [locationStockEntries]);
 
-  // Filtered locations list
+  // Map of SKU ID to its counted locations with descriptions
+  const skuLocationsMap = useMemo(() => {
+    const map = new Map<string, Array<{ code: string; qty: number; desc: string }>>();
+    locationStockEntries.forEach(entry => {
+      if (!map.has(entry.skuId)) {
+        map.set(entry.skuId, []);
+      }
+      const list = map.get(entry.skuId)!;
+      list.push({
+        code: entry.locationCode,
+        qty: entry.countedQty,
+        desc: locationDescMap.get(entry.locationCode) || getLocationDescription(entry.locationCode)
+      });
+    });
+    return map;
+  }, [locationStockEntries, locationDescMap]);
+
+  // Filtered locations list (searches code, zone, or description)
   const filteredLocations = useMemo(() => {
     return warehouseLocations.filter(loc => {
       if (zoneFilter !== 'ALL' && loc.type !== zoneFilter) return false;
       if (searchLocationQuery.trim()) {
         const q = searchLocationQuery.toLowerCase();
-        return loc.code.toLowerCase().includes(q) || loc.zone.toLowerCase().includes(q);
+        const desc = locationDescMap.get(loc.code) || loc.description || '';
+        return loc.code.toLowerCase().includes(q) || 
+               loc.zone.toLowerCase().includes(q) ||
+               desc.toLowerCase().includes(q);
       }
       return true;
     });
-  }, [warehouseLocations, zoneFilter, searchLocationQuery]);
+  }, [warehouseLocations, zoneFilter, searchLocationQuery, locationDescMap]);
 
   // Overall totals
   const totalPhysicalUnits = useMemo(() => {
@@ -280,7 +311,7 @@ export const LocationStockView: React.FC = () => {
           code,
           type: code.startsWith('BIN') ? 'BIN' : (code.match(/^[A-G]/) ? 'RACK' : 'PALLET'),
           zone: code.startsWith('BIN') ? 'Storage Bins' : (code.match(/^[A-G]/) ? `Rack ${code.charAt(0)}` : `Line ${code.charAt(0)}`),
-          description: `Location ${code}`
+          description: getLocationDescription(code)
         }));
         addWarehouseLocation(newLocs);
       }
@@ -720,7 +751,11 @@ export const LocationStockView: React.FC = () => {
                     </span>
                   </div>
 
-                  <div className="mt-3">
+                  <div className="mt-1 text-[11px] font-medium text-slate-500 dark:text-slate-400 font-sans line-clamp-1 leading-snug" title={locationDescMap.get(loc.code) || loc.description}>
+                    {locationDescMap.get(loc.code) || loc.description || getLocationDescription(loc.code)}
+                  </div>
+
+                  <div className="mt-2.5">
                     <div className="text-[11px] font-mono font-bold text-slate-700 dark:text-slate-300">
                       {stats.totalUnits.toLocaleString()} Pcs
                     </div>
@@ -791,12 +826,12 @@ export const LocationStockView: React.FC = () => {
                       </div>
                     </div>
                   ) : (
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <span className="text-xl font-black text-slate-900 dark:text-white font-mono">
                         Location {selectedLocation.code}
                       </span>
-                      <span className="text-xs font-bold text-slate-500 uppercase">
-                        ({selectedLocation.description})
+                      <span className="rounded-lg bg-orange-100 dark:bg-orange-950/80 text-orange-800 dark:text-orange-200 border border-orange-200 dark:border-orange-800 px-2.5 py-1 text-xs font-bold font-sans">
+                        {locationDescMap.get(selectedLocation.code) || selectedLocation.description || getLocationDescription(selectedLocation.code)}
                       </span>
                       <button
                         onClick={() => {
@@ -1000,6 +1035,41 @@ export const LocationStockView: React.FC = () => {
                                     <span>•</span>
                                     <span className="font-semibold text-slate-700 dark:text-slate-300">{sku.sku_code}</span>
                                   </div>
+
+                                  {/* Placements & Location Descriptions for this Item */}
+                                  {(() => {
+                                    const placements = skuLocationsMap.get(sku.id) || [];
+                                    if (placements.length > 0) {
+                                      return (
+                                        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px]">
+                                          <span className="font-bold text-slate-500 dark:text-slate-400">Stored at:</span>
+                                          {placements.map(p => (
+                                            <span 
+                                              key={p.code} 
+                                              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md font-mono ${
+                                                p.code === selectedLocation.code 
+                                                  ? 'bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-200 border border-orange-300 dark:border-orange-800 font-bold' 
+                                                  : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                                              }`}
+                                            >
+                                              <span className="font-black text-orange-600 dark:text-orange-400">{p.code}</span>
+                                              <span className="font-sans text-slate-500 font-medium truncate max-w-[180px]">({p.desc})</span>
+                                              <span className="font-bold text-emerald-600 dark:text-emerald-400">: {p.qty} Pcs</span>
+                                            </span>
+                                          ))}
+                                        </div>
+                                      );
+                                    } else if (sku.location_bin) {
+                                      return (
+                                        <div className="mt-1 text-[10px] text-slate-500 font-mono flex items-center gap-1">
+                                          <span className="font-bold text-slate-400">Bin:</span>
+                                          <span className="font-semibold text-slate-700 dark:text-slate-300">{sku.location_bin}</span>
+                                          <span className="font-sans text-slate-400">({getLocationDescription(sku.location_bin.split(',')[0])})</span>
+                                        </div>
+                                      );
+                                    }
+                                    return null;
+                                  })()}
                                 </div>
 
                                 {/* Badges on right: Existing Qty in Current Location */}
@@ -1028,7 +1098,7 @@ export const LocationStockView: React.FC = () => {
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-300 uppercase">
                           <CheckCircle2 className="h-3.5 w-3.5" />
-                          <span>Selected for {selectedLocation.code}</span>
+                          <span>Selected for {selectedLocation.code} ({locationDescMap.get(selectedLocation.code) || selectedLocation.description})</span>
                         </div>
                         <div className="font-bold text-xs text-slate-900 dark:text-white truncate mt-0.5">
                           {selectedSkuForCount.clean_name}
@@ -1036,6 +1106,23 @@ export const LocationStockView: React.FC = () => {
                         <div className="text-[10px] text-slate-500 font-mono">
                           {selectedSkuForCount.sku_code} • {selectedSkuForCount.division} • {selectedSkuForCount.main_category}
                         </div>
+                        {/* Current locations of selected item */}
+                        {(() => {
+                          const curLocs = skuLocationsMap.get(selectedSkuForCount.id) || [];
+                          if (curLocs.length > 0) {
+                            return (
+                              <div className="mt-1.5 flex flex-wrap items-center gap-1 text-[10px]">
+                                <span className="font-bold text-slate-600 dark:text-slate-400">Recorded Locations:</span>
+                                {curLocs.map(l => (
+                                  <span key={l.code} className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-white dark:bg-slate-900 border border-emerald-200 dark:border-emerald-800 font-mono">
+                                    <strong className="text-orange-600">{l.code}</strong> <span className="font-sans text-slate-500">({l.desc})</span>: <span className="font-bold text-emerald-600 dark:text-emerald-400">{l.qty} Pcs</span>
+                                  </span>
+                                ))}
+                              </div>
+                            );
+                          }
+                          return null;
+                        })()}
                       </div>
                       <button
                         onClick={() => {
@@ -1144,7 +1231,9 @@ export const LocationStockView: React.FC = () => {
                           <div key={it.id} className="flex items-center justify-between text-xs bg-white p-2.5 rounded-xl border border-slate-200 dark:bg-slate-900 dark:border-slate-700">
                             <div className="min-w-0 pr-2">
                               <span className="font-semibold text-slate-900 dark:text-white truncate block">{it.cleanName}</span>
-                              <span className="text-[10px] text-slate-400 font-mono">{it.skuCode}</span>
+                              <span className="text-[10px] text-slate-400 font-mono">
+                                {it.skuCode} • {locationDescMap.get(it.locationCode) || selectedLocation.description}
+                              </span>
                             </div>
                             <div className="flex items-center gap-2 shrink-0">
                               <span className="font-mono font-black text-emerald-600 dark:text-emerald-400">
@@ -1324,7 +1413,9 @@ export const LocationStockView: React.FC = () => {
                             className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-mono font-bold dark:border-slate-700 dark:bg-slate-800"
                           >
                             {warehouseLocations.map(l => (
-                              <option key={l.code} value={l.code}>{l.code}</option>
+                              <option key={l.code} value={l.code}>
+                                {l.code} — {locationDescMap.get(l.code) || l.description || getLocationDescription(l.code)}
+                              </option>
                             ))}
                           </select>
                         </td>
@@ -1379,7 +1470,8 @@ export const LocationStockView: React.FC = () => {
               <table className="w-full text-left border-collapse text-xs font-sans">
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-50 font-bold text-slate-600 dark:border-slate-800 dark:bg-slate-800 sticky top-0">
-                    <th className="py-3 px-4">Location Code</th>
+                    <th className="py-3 px-3">Location Code</th>
+                    <th className="py-3 px-4">Location Description</th>
                     <th className="py-3 px-3">SKU Code</th>
                     <th className="py-3 px-4">Item Name</th>
                     <th className="py-3 px-2 text-center">Division</th>
@@ -1392,8 +1484,18 @@ export const LocationStockView: React.FC = () => {
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                   {locationStockEntries.map(e => (
                     <tr key={e.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40">
-                      <td className="py-2.5 px-4 font-mono font-black text-orange-600 dark:text-orange-400">
-                        {e.locationCode}
+                      <td className="py-2.5 px-3 font-mono font-black text-orange-600 dark:text-orange-400">
+                        <span className="px-2 py-0.5 rounded-lg bg-orange-50 dark:bg-orange-950/60 border border-orange-200 dark:border-orange-800 inline-block font-bold">
+                          {e.locationCode}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-4 font-sans text-xs text-slate-700 dark:text-slate-300">
+                        <div className="font-bold text-slate-900 dark:text-white">
+                          {locationDescMap.get(e.locationCode) || getLocationDescription(e.locationCode)}
+                        </div>
+                        <div className="text-[10px] text-slate-400 font-mono">
+                          {getLocationZone(e.locationCode)}
+                        </div>
                       </td>
                       <td className="py-2.5 px-3 font-mono font-bold text-slate-700 dark:text-slate-300">
                         {e.skuCode}

@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { useInventoryStore } from '../store/useInventoryStore';
 import { TransactionType } from '../types/inventory';
+import { getLocationDescription } from '../lib/locationUtils';
 
 export const SkuInspectorDrawer: React.FC = () => {
   const { 
@@ -134,7 +135,12 @@ export const SkuInspectorDrawer: React.FC = () => {
                     <span className="text-xs font-semibold text-slate-400 font-sans italic">Not Assigned (—)</span>
                   )}
                 </div>
-                <span className="mt-2 block text-[10px] text-slate-400 font-mono">
+                {selectedSku.location_bin && (
+                  <div className="mt-1 text-xs text-orange-700 dark:text-orange-300 font-sans font-medium">
+                    {getLocationDescription(selectedSku.location_bin.split(',')[0]?.trim().replace(/\s*\(.*\)/, ''))}
+                  </div>
+                )}
+                <span className="mt-1.5 block text-[10px] text-slate-400 font-mono">
                   Division: {selectedSku.division}
                 </span>
               </div>
