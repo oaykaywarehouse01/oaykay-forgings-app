@@ -126,9 +126,13 @@ export const SkuInspectorDrawer: React.FC = () => {
                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                   Warehouse Location Bin
                 </span>
-                <div className="mt-1 flex items-center gap-1.5 font-mono text-lg font-bold text-slate-800 dark:text-slate-200">
-                  <MapPin className="h-4 w-4 text-orange-500" />
-                  <span>{selectedSku.location_bin}</span>
+                <div className="mt-1 flex items-center gap-1.5 font-mono text-base font-bold text-slate-800 dark:text-slate-200">
+                  <MapPin className="h-4 w-4 text-orange-500 shrink-0" />
+                  {selectedSku.location_bin ? (
+                    <span className="truncate">{selectedSku.location_bin}</span>
+                  ) : (
+                    <span className="text-xs font-semibold text-slate-400 font-sans italic">Not Assigned (—)</span>
+                  )}
                 </div>
                 <span className="mt-2 block text-[10px] text-slate-400 font-mono">
                   Division: {selectedSku.division}

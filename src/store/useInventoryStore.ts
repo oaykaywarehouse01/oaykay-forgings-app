@@ -17,7 +17,7 @@ import {
   AppUser
 } from '../types/inventory';
 import { InventorySearchEngine } from '../lib/searchEngine';
-import { generateInitialWarehouseLocations, normalizeLocationCode } from '../lib/locationUtils';
+import { generateInitialWarehouseLocations, normalizeLocationCode, isMockLocationCode } from '../lib/locationUtils';
 import * as XLSX from 'xlsx';
 
 export interface DeductedSOInfo {
@@ -308,8 +308,18 @@ const getInitialState = () => {
           ? (sanitizedUsers.find(u => u.id === savedSessionUserId) || null)
           : null;
 
-        return {
-          skus: parsed.skus as SkuItem[],
+        // Sanitize legacy mock location codes like M-12-6, N-05-3, T-20-2
+        let hadMockLocations = false;
+        const sanitizedSkus = (parsed.skus as SkuItem[]).map(s => {
+          if (s.location_bin && isMockLocationCode(s.location_bin)) {
+            hadMockLocations = true;
+            return { ...s, location_bin: '' };
+          }
+          return s;
+        });
+
+        const stateObj = {
+          skus: sanitizedSkus,
           categories: parsed.categories as CategoryGroup[],
           divisions: parsed.divisions as Record<DivisionCode, DivisionInfo>,
           transactions: sanitizedTxns,
@@ -327,14 +337,27 @@ const getInitialState = () => {
           users: sanitizedUsers,
           currentUser: activeCurUser
         };
+
+        if (hadMockLocations) {
+          saveStorage(stateObj);
+        }
+
+        return stateObj;
       }
     }
   } catch (e) {
     console.warn('Could not restore from localStorage, using initial seed data', e);
   }
 
+  const cleanSeedSkus = (initialSeedData.skus as unknown as SkuItem[]).map(s => {
+    if (s.location_bin && isMockLocationCode(s.location_bin)) {
+      return { ...s, location_bin: '' };
+    }
+    return s;
+  });
+
   return {
-    skus: initialSeedData.skus as unknown as SkuItem[],
+    skus: cleanSeedSkus,
     categories: initialSeedData.categories_hierarchy as CategoryGroup[],
     divisions: initialSeedData.divisions as Record<DivisionCode, DivisionInfo>,
     transactions: [] as Transaction[],
@@ -685,7 +708,7 @@ export const useInventoryStore = create<InventoryStore>((set, get) => ({
     const nextCodeNum = maxNum + 1;
     const skuCode = `OKF-${div}-${String(nextCodeNum).padStart(4, '0')}`;
     const initialQty = Math.round(item.initial_stock || 0);
-    const locBin = item.location_bin ? normalizeLocationCode(item.location_bin) : 'A1';
+    const locBin = item.location_bin ? normalizeLocationCode(item.location_bin) : '';
 
     const cleanName = item.clean_name.trim();
 

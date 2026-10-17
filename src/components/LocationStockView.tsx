@@ -489,100 +489,111 @@ export const LocationStockView: React.FC = () => {
       )}
 
       {/* Top Banner & Control Bar */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between rounded-2xl border-2 border-slate-200 bg-white p-5 shadow-xs dark:border-slate-800 dark:bg-slate-900 gap-4">
-        <div>
-          <div className="flex items-center gap-2 text-xs font-extrabold text-orange-600 uppercase tracking-wider">
-            <MapPin className="h-3.5 w-3.5" />
-            <span>Independent Warehouse Locations & Physical Count Module</span>
+      <div className="rounded-2xl border border-slate-200/80 bg-white p-5 sm:p-6 shadow-xs dark:border-slate-800 dark:bg-slate-900 transition-all">
+        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-5">
+          {/* Header Info */}
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-orange-50 px-2.5 py-0.5 text-[11px] font-black text-orange-700 dark:bg-orange-950/60 dark:text-orange-300 border border-orange-200/80 dark:border-orange-800/60 uppercase tracking-wide">
+                <MapPin className="h-3.5 w-3.5 text-orange-600 dark:text-orange-400" />
+                Physical Count Module
+              </span>
+              <span className="inline-flex items-center rounded-full bg-indigo-50 px-2.5 py-0.5 text-[11px] font-bold text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 border border-indigo-200/80 dark:border-indigo-800/60">
+                100% Independent Sandbox
+              </span>
+            </div>
+
+            <h1 className="mt-2 text-2xl sm:text-3xl font-black text-slate-900 dark:text-white tracking-tight">
+              Warehouse Location Stock
+            </h1>
+
+            <p className="mt-1 text-xs sm:text-sm text-slate-600 dark:text-slate-300">
+              <span className="font-semibold text-slate-900 dark:text-white">Active Warehouse Zones:</span> Steel Racks (A–G, 3 shelves) • Floor Pallet Lines (H–P, 6 pallets) • Small Parts Bins (BIN-1 to BIN-30)
+            </p>
+
+            <p className="mt-1 text-[11px] sm:text-xs text-slate-400 dark:text-slate-500">
+              Physical counting operates isolated from daily dispatches until Admin triggers <strong className="text-slate-600 dark:text-slate-300 font-semibold">Make Location Stock LIVE</strong>.
+            </p>
           </div>
-          <h1 className="mt-1 text-2xl font-black text-slate-900 dark:text-white flex items-center gap-3">
-            <span>Location Stock (Steel Racks A–G • Pallets H+ • Bins)</span>
-            <span className="rounded-full bg-indigo-100 px-3 py-0.5 text-xs font-bold text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
-              V3 Independent
-            </span>
-          </h1>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-2xl">
-            Physical counting in this module operates 100% independently from daily dispatches until Admin triggers <strong>Sync & Make Location Stock LIVE</strong>.
-          </p>
-        </div>
 
-        {/* Global Action Buttons */}
-        <div className="flex flex-wrap items-center gap-2 shrink-0">
-          <button
-            onClick={handleDownloadTemplate}
-            className="flex items-center gap-1.5 rounded-xl border border-slate-300 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 transition"
-            title="Download OKF_Location_Wise_Stock_Template.xlsx with 3 pre-filled sheets"
-          >
-            <Download className="h-3.5 w-3.5 text-orange-600" />
-            <span>Download Template (.xlsx)</span>
-          </button>
-
-          <label className="flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100 dark:border-indigo-900 dark:bg-indigo-950 dark:text-indigo-300 cursor-pointer transition">
-            <Upload className="h-3.5 w-3.5 text-indigo-600" />
-            <span>{isUploadingExcel ? 'Uploading...' : 'Upload Filled Excel (.xlsx)'}</span>
-            <input
-              type="file"
-              accept=".xlsx,.xls"
-              onChange={handleUploadFilledTemplate}
-              disabled={isUploadingExcel}
-              className="sr-only"
-            />
-          </label>
-
-          <button
-            onClick={() => setIsAddLocationModalOpen(true)}
-            className="flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 transition"
-          >
-            <Plus className="h-3.5 w-3.5 text-emerald-600" />
-            <span>+ Add Location</span>
-          </button>
-
-          {currentUser?.role === 'admin' && (
+          {/* Action Buttons */}
+          <div className="flex flex-wrap items-center gap-2.5 xl:justify-end shrink-0 pt-3 xl:pt-0 border-t xl:border-t-0 border-slate-100 dark:border-slate-800">
             <button
-              onClick={handleMakeLocationStockLive}
-              className="flex items-center gap-1.5 rounded-xl bg-orange-600 px-4 py-2 text-xs font-bold text-white shadow-xs hover:bg-orange-700 active:scale-95 transition"
-              title="Sync net location physical totals into main Stock Master"
+              onClick={handleDownloadTemplate}
+              className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50/90 px-3.5 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/90 dark:text-slate-200 transition shadow-2xs hover:shadow-xs active:scale-95 cursor-pointer"
+              title="Download pre-filled Excel template"
             >
-              <RefreshCw className="h-3.5 w-3.5" />
-              <span>Make Location Stock LIVE!</span>
+              <Download className="h-3.5 w-3.5 text-orange-600 dark:text-orange-400" />
+              <span>Download Template (.xlsx)</span>
             </button>
-          )}
+
+            <label className="flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50/90 px-3.5 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100 dark:border-indigo-900/60 dark:bg-indigo-950/60 dark:text-indigo-300 cursor-pointer transition shadow-2xs hover:shadow-xs active:scale-95">
+              <Upload className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400" />
+              <span>{isUploadingExcel ? 'Uploading...' : 'Upload Filled Excel (.xlsx)'}</span>
+              <input
+                type="file"
+                accept=".xlsx,.xls"
+                onChange={handleUploadFilledTemplate}
+                disabled={isUploadingExcel}
+                className="sr-only"
+              />
+            </label>
+
+            <button
+              onClick={() => setIsAddLocationModalOpen(true)}
+              className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 transition shadow-2xs hover:shadow-xs active:scale-95 cursor-pointer"
+            >
+              <Plus className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+              <span>+ Add Location</span>
+            </button>
+
+            {currentUser?.role === 'admin' && (
+              <button
+                onClick={handleMakeLocationStockLive}
+                className="flex items-center gap-2 rounded-xl bg-orange-600 px-4 py-2 text-xs font-black text-white shadow-xs hover:bg-orange-700 active:scale-95 transition cursor-pointer"
+                title="Sync net location physical totals into main Stock Master"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                <span>Make Location Stock LIVE!</span>
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
       {/* KPI Stats Bar */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <div className="rounded-xl border border-slate-200 bg-white p-3.5 dark:border-slate-800 dark:bg-slate-900 shadow-2xs">
-          <span className="text-[10px] font-bold text-slate-400 uppercase">Warehouse Locations</span>
-          <div className="mt-1 font-mono text-xl font-black text-slate-900 dark:text-white">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
+        <div className="rounded-2xl border border-slate-200/80 bg-white p-4 dark:border-slate-800 dark:bg-slate-900 shadow-2xs">
+          <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Warehouse Locations</span>
+          <div className="mt-1 font-mono text-xl sm:text-2xl font-black text-slate-900 dark:text-white">
             {warehouseLocations.length} <span className="text-xs text-slate-400 font-normal">Registered</span>
           </div>
-          <span className="text-[10px] text-slate-500 font-mono">21 Racks • 54 Pallets • 30+ Bins</span>
+          <span className="text-[11px] text-slate-500 font-mono mt-0.5 block">21 Racks • 54 Pallets • 30+ Bins</span>
         </div>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-3.5 dark:border-slate-800 dark:bg-slate-900 shadow-2xs">
-          <span className="text-[10px] font-bold text-indigo-500 uppercase">SKUs Counted</span>
-          <div className="mt-1 font-mono text-xl font-black text-indigo-600 dark:text-indigo-400">
-            {uniqueSkusCounted} / {skus.length}
+        <div className="rounded-2xl border border-indigo-100 bg-white p-4 dark:border-slate-800 dark:bg-slate-900 shadow-2xs">
+          <span className="text-[10px] font-black text-indigo-500 uppercase tracking-wider">SKUs Counted</span>
+          <div className="mt-1 font-mono text-xl sm:text-2xl font-black text-indigo-600 dark:text-indigo-400">
+            {uniqueSkusCounted} <span className="text-xs font-normal text-slate-400">/ {skus.length}</span>
           </div>
-          <span className="text-[10px] text-slate-500 font-mono">{((uniqueSkusCounted / skus.length) * 100).toFixed(1)}% Coverage</span>
+          <span className="text-[11px] text-indigo-600/80 font-mono mt-0.5 block">{((uniqueSkusCounted / (skus.length || 1)) * 100).toFixed(1)}% Catalog Coverage</span>
         </div>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-3.5 dark:border-slate-800 dark:bg-slate-900 shadow-2xs">
-          <span className="text-[10px] font-bold text-emerald-500 uppercase">Total Counted Units</span>
-          <div className="mt-1 font-mono text-xl font-black text-emerald-600 dark:text-emerald-400">
+        <div className="rounded-2xl border border-emerald-100 bg-white p-4 dark:border-slate-800 dark:bg-slate-900 shadow-2xs">
+          <span className="text-[10px] font-black text-emerald-500 uppercase tracking-wider">Total Counted Units</span>
+          <div className="mt-1 font-mono text-xl sm:text-2xl font-black text-emerald-600 dark:text-emerald-400">
             {totalPhysicalUnits.toLocaleString()} <span className="text-xs font-normal">Pcs</span>
           </div>
-          <span className="text-[10px] text-slate-500 font-mono">{locationStockEntries.length} Storage Placements</span>
+          <span className="text-[11px] text-emerald-600/80 font-mono mt-0.5 block">{locationStockEntries.length} Storage Placements</span>
         </div>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-3.5 dark:border-slate-800 dark:bg-slate-900 shadow-2xs">
-          <span className="text-[10px] font-bold text-amber-500 uppercase">Counting Window Status</span>
+        <div className="rounded-2xl border border-amber-100 bg-white p-4 dark:border-slate-800 dark:bg-slate-900 shadow-2xs">
+          <span className="text-[10px] font-black text-amber-500 uppercase tracking-wider">Counting Window Status</span>
           <div className="mt-1 font-mono text-sm font-black text-slate-800 dark:text-slate-200 truncate">
             {reconcileStartDate} → {reconcileEndDate}
           </div>
-          <span className="text-[10px] text-amber-600 font-mono font-bold">
-            {countSession.reconciledOrders.length} Outward Dispatches Reconciled
+          <span className="text-[11px] text-amber-600 font-mono font-bold mt-0.5 block">
+            {countSession.reconciledOrders.length} Dispatches Reconciled
           </span>
         </div>
       </div>

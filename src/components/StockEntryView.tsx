@@ -237,7 +237,9 @@ export const StockEntryView: React.FC = () => {
 
                   <div className="mt-1 flex items-center justify-between text-[10px] text-slate-400 font-mono">
                     <span className="truncate max-w-[170px]">{item.sub_category}</span>
-                    <span className="font-bold text-slate-600 dark:text-slate-300">{item.location_bin}</span>
+                    <span className="font-bold text-slate-600 dark:text-slate-300">
+                      {item.location_bin || <span className="font-normal text-slate-400 italic">—</span>}
+                    </span>
                   </div>
                 </div>
               );

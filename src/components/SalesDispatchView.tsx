@@ -20,7 +20,6 @@ import {
   Plus, 
   Trash2, 
   RotateCcw,
-  Sparkles,
   Link2,
   SlidersHorizontal,
   Scale,
@@ -39,7 +38,6 @@ import {
 } from '../types/inventory';
 import { 
   parseSalesOrderExcel, 
-  getSampleSalesOrder699, 
   generateCartonsAndPackagingList, 
   exportPackagingListToExcel, 
   exportLabelsToExcel 
@@ -185,11 +183,28 @@ export const SalesDispatchView: React.FC = () => {
       setSoData(info.soDataSnapshot);
       setSuccessMessage(`Opened past dispatched order PI #${info.piNumber} (${info.partyName}).`);
     } else {
-      const sample = getSampleSalesOrder699(skus);
-      sample.piNumber = info.piNumber;
-      sample.partyName = info.partyName;
-      setSoData(sample);
-      setSuccessMessage(`Opened past dispatched order PI #${info.piNumber}.`);
+      const reconstructedItems: SalesOrderItem[] = (info.deductions || []).map((d, idx) => ({
+        slNo: idx + 1,
+        rawItemName: d.cleanName,
+        cleanItemName: d.cleanName,
+        orderedQty: d.qtyDeducted,
+        dispatchQty: d.qtyDeducted,
+        matchedSku: skus.find(s => s.id === d.skuId || s.sku_code === d.skuCode) || null,
+        isPromoOrNonStock: false,
+        unitsPerBox: d.qtyDeducted,
+        grossWeightPerBox: 10
+      }));
+      setSoData({
+        piNumber: info.piNumber,
+        orderDate: info.deductedAt ? info.deductedAt.slice(0, 10) : new Date().toISOString().slice(0, 10),
+        partyName: info.partyName,
+        partyAbbr: info.partyName ? info.partyName.slice(0, 4).toUpperCase() : 'ORD',
+        stateName: 'General',
+        stateCode: '00',
+        shippingMark: `${info.partyName ? info.partyName.slice(0, 4).toUpperCase() : 'ORD'}/DISPATCH`,
+        items: reconstructedItems
+      });
+      setSuccessMessage(`Opened past dispatched order PI #${info.piNumber} (${info.partyName}).`);
     }
   };
 
@@ -847,14 +862,12 @@ export const SalesDispatchView: React.FC = () => {
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  const sample = getSampleSalesOrder699(skus);
-                  setSoData(sample);
-                  setSuccessMessage('Loaded Sample Sales Order PI #699 (R M Tools Solutions).');
+                  fileInputRef.current?.click();
                 }}
-                className="flex items-center gap-2 rounded-xl bg-orange-600 hover:bg-orange-700 text-white px-5 py-2.5 text-xs font-black shadow-md transition active:scale-95"
+                className="flex items-center gap-2 rounded-xl bg-orange-600 hover:bg-orange-700 text-white px-6 py-2.5 text-xs font-black shadow-md transition active:scale-95 cursor-pointer"
               >
-                <Sparkles className="h-4 w-4" />
-                <span>Load Sample Sales Order #699</span>
+                <Upload className="h-4 w-4" />
+                <span>Select Sales Order Excel (.xlsx, .xls)</span>
               </button>
             </div>
 

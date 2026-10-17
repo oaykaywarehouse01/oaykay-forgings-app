@@ -156,7 +156,7 @@ export const AddNewSkuModal: React.FC = () => {
       material_and_tier: materialTier.trim() || undefined,
       unit,
       initial_stock: parseInt(openingStock, 10) || 0,
-      location_bin: normalizeLocationCode(locationBin) || 'A1'
+      location_bin: normalizeLocationCode(locationBin) || ''
     });
 
     setSuccessToast(`Created new SKU: ${created.sku_code} — ${created.clean_name}`);

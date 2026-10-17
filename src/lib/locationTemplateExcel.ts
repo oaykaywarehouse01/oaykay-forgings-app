@@ -1,7 +1,7 @@
 import ExcelJS from 'exceljs';
 import * as XLSX from 'xlsx';
 import { SkuItem, WarehouseLocation, CategoryGroup, DivisionCode } from '../types/inventory';
-import { normalizeLocationCode } from './locationUtils';
+import { normalizeLocationCode, isMockLocationCode } from './locationUtils';
 
 /**
  * Generates and downloads the official OKF 3-Sheet Location-Wise Stock Template
@@ -112,7 +112,7 @@ export const downloadLocationStockTemplate = async (
       sku.clean_name,
       sku.division,
       sku.main_category,
-      sku.location_bin ? sku.location_bin.split(',')[0]?.trim().replace(/\s*\(.*\)/, '') : '',
+      sku.location_bin && !isMockLocationCode(sku.location_bin) ? sku.location_bin.split(',')[0]?.trim().replace(/\s*\(.*\)/, '') : '',
       '',
       '',
       '',

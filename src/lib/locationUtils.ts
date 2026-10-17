@@ -1,6 +1,14 @@
 import { WarehouseLocation, LocationType } from '../types/inventory';
 
 /**
+ * Detects legacy mock location codes synthesized in initial scripts (e.g. M-12-6, N-05-3, T-20-2)
+ */
+export const isMockLocationCode = (input: string | null | undefined): boolean => {
+  if (!input) return false;
+  return /^[MNT]-\d{2}-\d+$/i.test(String(input).trim());
+};
+
+/**
  * Normalizes user or excel location string into standard Oaykay format:
  * - "a1", "a 1", "A-1", "A 1" -> "A1"
  * - "h4", "H-4", "h 4" -> "H4"
@@ -9,6 +17,11 @@ import { WarehouseLocation, LocationType } from '../types/inventory';
 export const normalizeLocationCode = (input: string | null | undefined): string => {
   if (!input) return '';
   const cleaned = String(input).trim().toUpperCase();
+
+  // If input matches legacy mock pattern (e.g. M-12-6, N-05-3, T-20-2), treat as unassigned
+  if (isMockLocationCode(cleaned)) {
+    return '';
+  }
 
   // Match BIN patterns: e.g. BIN-1, BIN 1, BIN01, BIN-01, B1 (if explicit bin context)
   const binMatch = cleaned.match(/^BIN[\s-_]*0*(\d+)$/i);
