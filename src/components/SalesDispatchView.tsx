@@ -2001,6 +2001,11 @@ export const SalesDispatchView: React.FC = () => {
                                         {item.size}
                                       </span>
                                     )}
+                                    {item.icInfo && (
+                                      <span className="shrink-0 rounded bg-blue-50 text-blue-700 text-[10px] font-bold px-1.5 py-0.5 dark:bg-blue-950 dark:text-blue-300 font-mono">
+                                        {item.icInfo}
+                                      </span>
+                                    )}
                                   </div>
                                 </td>
 
@@ -2317,6 +2322,11 @@ export const SalesDispatchView: React.FC = () => {
                                                   {item.size}
                                                 </span>
                                               )}
+                                              {item.icInfo && (
+                                                <span className="shrink-0 text-[9px] font-bold text-slate-500 print:text-black">
+                                                  ({item.icInfo})
+                                                </span>
+                                              )}
                                             </div>
                                           </td>
                                           <td className="py-1 px-1 text-right font-black text-slate-900 dark:text-white tabular-nums print:text-black text-sm sm:text-base print:text-sm">
@@ -2454,6 +2464,11 @@ export const SalesDispatchView: React.FC = () => {
                                             {item.size && (
                                               <span className="shrink-0 text-[10px] font-black bg-slate-100 print:bg-transparent px-1 rounded text-black">
                                                 {item.size}
+                                              </span>
+                                            )}
+                                            {item.icInfo && (
+                                              <span className="shrink-0 text-[9px] font-bold text-slate-500 print:text-black">
+                                                ({item.icInfo})
                                               </span>
                                             )}
                                           </div>
