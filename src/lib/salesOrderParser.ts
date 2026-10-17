@@ -106,7 +106,7 @@ export const matchItemToSku = (
   }
 
   // If still not matched, check if it could be a non-stock / promo item
-  return { matchedSku: null, isPromo: isLikelyPromoItem(rawName) || true };
+  return { matchedSku: null, isPromo: isLikelyPromoItem(rawName) };
 };
 
 // Default packing suggestions based on item name and quantity

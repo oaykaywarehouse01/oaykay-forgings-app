@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { 
   FileSpreadsheet, 
   Upload, 
@@ -12,7 +12,6 @@ import {
   Undo2, 
   Tag, 
   PackageCheck, 
-  Calendar, 
   Copy, 
   Check, 
   X, 
@@ -21,7 +20,13 @@ import {
   Plus, 
   Trash2, 
   RotateCcw,
-  Sparkles
+  Sparkles,
+  Link2,
+  SlidersHorizontal,
+  Scale,
+  Layers,
+  HelpCircle,
+  AlertCircle
 } from 'lucide-react';
 import { useInventoryStore, DeductedSOInfo } from '../store/useInventoryStore';
 import { 
@@ -29,7 +34,8 @@ import {
   SalesOrderItem, 
   PackingListSummary, 
   Carton,
-  CartonItem
+  CartonItem,
+  SkuItem
 } from '../types/inventory';
 import { 
   parseSalesOrderExcel, 
@@ -43,6 +49,20 @@ interface QuickInModalState {
   item: SalesOrderItem;
   inQty: number;
   reason: string;
+}
+
+interface SkuMappingModalState {
+  item: SalesOrderItem;
+}
+
+interface NegativeStockModalState {
+  isOpen: boolean;
+  negativeItems: Array<{
+    item: SalesOrderItem;
+    currentStock: number;
+    dispatchQty: number;
+    newStock: number;
+  }>;
 }
 
 export const SalesDispatchView: React.FC = () => {
@@ -65,6 +85,13 @@ export const SalesDispatchView: React.FC = () => {
   // Quick Stock IN Modal state
   const [quickInModal, setQuickInModal] = useState<QuickInModalState | null>(null);
 
+  // Negative Stock Confirmation Modal state
+  const [negativeStockModal, setNegativeStockModal] = useState<NegativeStockModalState | null>(null);
+
+  // SKU Manual Mapping Modal state
+  const [skuMappingModal, setSkuMappingModal] = useState<SkuMappingModalState | null>(null);
+  const [skuSearchQuery, setSkuSearchQuery] = useState('');
+
   // Direct typing map to allow backspace/clearing numeric inputs without forcing 0/1
   const [rawInputMap, setRawInputMap] = useState<Record<string, string>>({});
 
@@ -76,7 +103,18 @@ export const SalesDispatchView: React.FC = () => {
   const [labelViewMode, setLabelViewMode] = useState<'all-grid' | 'single-carousel'>('all-grid');
   const [currentCartonIndex, setCurrentCartonIndex] = useState<number>(0);
 
+  // =========================================================================
+  // INTERACTIVE MANUAL BOX BUILDER STATE (Dedicated Top Panel)
+  // =========================================================================
+  const [builderItemSlNo, setBuilderItemSlNo] = useState<number | ''>('');
+  const [builderUnitsPerBox, setBuilderUnitsPerBox] = useState<string>('10');
+  const [builderGrossWeight, setBuilderGrossWeight] = useState<string>('10.00');
+  const [builderStartBox, setBuilderStartBox] = useState<string>('');
+  const [builderDispatchQty, setBuilderDispatchQty] = useState<string>('');
+  const [isBuilderExpanded, setIsBuilderExpanded] = useState<boolean>(true);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const boxBuilderRef = useRef<HTMLDivElement>(null);
 
   // Handle uploading user's Tally SO Excel file
   const processUploadedFile = async (file: File) => {
@@ -133,7 +171,10 @@ export const SalesDispatchView: React.FC = () => {
     setCurrentCartonIndex(0);
     setCustomCartons(null);
     setQuickInModal(null);
+    setNegativeStockModal(null);
+    setSkuMappingModal(null);
     setRawInputMap({});
+    setBuilderItemSlNo('');
   };
 
   // Re-open a past dispatched order from history
@@ -183,13 +224,21 @@ export const SalesDispatchView: React.FC = () => {
     });
     setSoData({ ...soData, items: nextItems });
     setCustomCartons(null);
+
+    // If builder currently has this item, sync builder dispatch qty
+    if (builderItemSlNo === slNo) {
+      const target = nextItems.find(i => i.slNo === slNo);
+      if (target) {
+        setBuilderDispatchQty(String(target.dispatchQty ?? target.orderedQty));
+      }
+    }
   };
 
   // Open Quick Stock IN Modal for Shortage Item
   const handleOpenQuickIn = (item: SalesOrderItem) => {
     const currentStock = item.matchedSku ? Math.round(item.matchedSku.current_stock) : 0;
-    const ordered = Math.round(item.orderedQty);
-    const shortage = Math.max(1, ordered - currentStock);
+    const dispatchQty = typeof item.dispatchQty === 'number' ? Math.round(item.dispatchQty) : Math.round(item.orderedQty);
+    const shortage = Math.max(1, dispatchQty - currentStock);
     setQuickInModal({
       item,
       inQty: shortage,
@@ -236,14 +285,74 @@ export const SalesDispatchView: React.FC = () => {
     setQuickInModal(null);
   };
 
-  // Deduct Stock Action
+  // Manual SKU Linking Handler
+  const handleMapSkuToItem = (sku: SkuItem) => {
+    if (!skuMappingModal || !soData) return;
+    const nextItems = soData.items.map(it => {
+      if (it.slNo !== skuMappingModal.item.slNo) return it;
+      return {
+        ...it,
+        matchedSku: sku,
+        cleanItemName: sku.clean_name,
+        isPromoOrNonStock: false
+      };
+    });
+    setSoData({ ...soData, items: nextItems });
+    setCustomCartons(null);
+    setSuccessMessage(`Mapped Item #${skuMappingModal.item.slNo} to SKU: ${sku.clean_name} (Current Stock: ${Math.round(sku.current_stock)}).`);
+    setSkuMappingModal(null);
+  };
+
+  // =========================================================================
+  // STOCK DEDUCTION & NEGATIVE STOCK HANDLING
+  // =========================================================================
   const isDeducted = soData ? Boolean(deductedSalesOrders[soData.piNumber]) : false;
+
+  // Initiate stock deduction: Check if any item will result in negative warehouse stock
+  const handleInitiateDeductStock = () => {
+    if (!soData) return;
+
+    const negativeItems: Array<{
+      item: SalesOrderItem;
+      currentStock: number;
+      dispatchQty: number;
+      newStock: number;
+    }> = [];
+
+    soData.items.forEach(item => {
+      if (!item.matchedSku || item.isPromoOrNonStock) return;
+      const currentStock = Math.round(item.matchedSku.current_stock);
+      const dispatchQty = typeof item.dispatchQty === 'number' ? Math.round(item.dispatchQty) : Math.round(item.orderedQty);
+      if (dispatchQty <= 0) return;
+      const newStock = currentStock - dispatchQty;
+      if (newStock < 0) {
+        negativeItems.push({
+          item,
+          currentStock,
+          dispatchQty,
+          newStock
+        });
+      }
+    });
+
+    if (negativeItems.length > 0) {
+      // Prompt user with authorization modal for negative stock
+      setNegativeStockModal({
+        isOpen: true,
+        negativeItems
+      });
+    } else {
+      // Stock is sufficient across all items, proceed directly
+      handleConfirmDeductStock();
+    }
+  };
 
   const handleConfirmDeductStock = () => {
     if (!soData) return;
     const res = deductSalesOrderStock(soData);
     if (res.success) {
       setSuccessMessage(res.message);
+      setNegativeStockModal(null);
     } else {
       setUploadError(res.message);
     }
@@ -258,7 +367,120 @@ export const SalesDispatchView: React.FC = () => {
     }
   };
 
-  // Item packing input changes (Units per box, Gross weight per box, Box No.)
+  // =========================================================================
+  // INTERACTIVE QUICK BOX BUILDER LOGIC
+  // =========================================================================
+  // Initialize Quick Box Builder with first non-promo item
+  useEffect(() => {
+    if (soData && soData.items.length > 0 && builderItemSlNo === '') {
+      const firstNonPromo = soData.items.find(i => !i.isPromoOrNonStock) || soData.items[0];
+      if (firstNonPromo) {
+        selectBuilderItem(firstNonPromo.slNo);
+      }
+    }
+  }, [soData, builderItemSlNo]);
+
+  const selectBuilderItem = (slNo: number) => {
+    setBuilderItemSlNo(slNo);
+    const it = soData?.items.find(i => i.slNo === slNo);
+    if (it) {
+      const qty = typeof it.dispatchQty === 'number' ? it.dispatchQty : it.orderedQty;
+      setBuilderDispatchQty(String(qty));
+      setBuilderUnitsPerBox(String(it.unitsPerBox || (qty > 10 ? 10 : qty) || 10));
+      setBuilderGrossWeight(String(it.grossWeightPerBox || 10.00));
+      setBuilderStartBox(it.assignedBoxNo !== null && it.assignedBoxNo !== undefined ? String(it.assignedBoxNo) : '');
+    }
+  };
+
+  const handleSelectBuilderItemAndScroll = (slNo: number) => {
+    selectBuilderItem(slNo);
+    setIsBuilderExpanded(true);
+    if (boxBuilderRef.current) {
+      boxBuilderRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
+
+  // Live preview calculation for the selected item in Box Builder
+  const builderPreview = useMemo(() => {
+    if (!soData || builderItemSlNo === '') return null;
+    const item = soData.items.find(i => i.slNo === builderItemSlNo);
+    if (!item) return null;
+
+    const totalQty = parseInt(builderDispatchQty, 10) || (typeof item.dispatchQty === 'number' ? Math.round(item.dispatchQty) : Math.round(item.orderedQty));
+    const unitsPerBox = Math.max(1, parseInt(builderUnitsPerBox, 10) || totalQty);
+    const grossWeight = parseFloat(builderGrossWeight) || 10.00;
+    const startBoxNum = builderStartBox.trim() === '' ? null : Math.max(1, parseInt(builderStartBox, 10) || 1);
+
+    if (totalQty <= 0) return null;
+
+    const totalBoxes = Math.ceil(totalQty / unitsPerBox);
+    const fullBoxes = Math.floor(totalQty / unitsPerBox);
+    const remainderQty = totalQty % unitsPerBox;
+
+    const boxesList: Array<{
+      boxIndex: number;
+      boxNumberDisplay: string;
+      qty: number;
+      grossWeight: number;
+      isRemainder: boolean;
+    }> = [];
+
+    for (let b = 0; b < totalBoxes; b++) {
+      const isRemainder = remainderQty > 0 && b === totalBoxes - 1;
+      const boxQty = isRemainder ? remainderQty : unitsPerBox;
+      const boxWeight = isRemainder 
+        ? Number(((boxQty / unitsPerBox) * grossWeight).toFixed(2))
+        : Number(grossWeight.toFixed(2));
+
+      const boxNoDisplay = startBoxNum !== null ? `#${startBoxNum + b}` : `Auto (#${b + 1})`;
+
+      boxesList.push({
+        boxIndex: b + 1,
+        boxNumberDisplay: boxNoDisplay,
+        qty: boxQty,
+        grossWeight: boxWeight,
+        isRemainder
+      });
+    }
+
+    return {
+      item,
+      totalQty,
+      unitsPerBox,
+      grossWeight,
+      startBoxNum,
+      totalBoxes,
+      fullBoxes,
+      remainderQty,
+      boxesList
+    };
+  }, [soData, builderItemSlNo, builderUnitsPerBox, builderGrossWeight, builderStartBox, builderDispatchQty]);
+
+  // Apply Builder configuration to active soData
+  const handleApplyQuickBoxBuilder = () => {
+    if (!soData || !builderPreview) return;
+    const item = builderPreview.item;
+    const newDispatchQty = parseInt(builderDispatchQty, 10) || (typeof item.dispatchQty === 'number' ? item.dispatchQty : item.orderedQty);
+
+    const nextItems = soData.items.map(it => {
+      if (it.slNo !== item.slNo) return it;
+      return {
+        ...it,
+        dispatchQty: newDispatchQty,
+        unitsPerBox: builderPreview.unitsPerBox,
+        grossWeightPerBox: builderPreview.grossWeight,
+        assignedBoxNo: builderPreview.startBoxNum
+      };
+    });
+
+    setSoData({ ...soData, items: nextItems });
+    setCustomCartons(null);
+    setSuccessMessage(
+      `Applied Box Setup for "${item.cleanItemName}": ${builderPreview.totalBoxes} Boxes (${builderPreview.unitsPerBox} Pcs/Box @ ${builderPreview.grossWeight} Kg) starting at Box ${builderPreview.startBoxNum !== null ? '#' + builderPreview.startBoxNum : 'Auto'}!`
+    );
+  };
+
+  // Item packing input changes directly from table
   const handleUpdateItemPacking = (
     slNo: number, 
     field: 'unitsPerBox' | 'grossWeightPerBox' | 'assignedBoxNo',
@@ -283,37 +505,6 @@ export const SalesDispatchView: React.FC = () => {
     handleUpdateItemPacking(slNo, 'assignedBoxNo', boxNo);
   };
 
-  // Toggle promo item selection for the Last Box
-  const handleTogglePromoForLastBox = (slNo: number) => {
-    if (!soData) return;
-    const nextItems = soData.items.map(it => {
-      if (it.slNo !== slNo) return it;
-      const current = it.selectedForLastBox !== false;
-      return {
-        ...it,
-        selectedForLastBox: !current
-      };
-    });
-    setSoData({ ...soData, items: nextItems });
-    setCustomCartons(null);
-  };
-
-  // Update promo combined box weight
-  const handleUpdatePromoBoxWeight = (weight: number) => {
-    if (!soData) return;
-    const nextItems = soData.items.map(it => {
-      if (it.isPromoOrNonStock) {
-        return {
-          ...it,
-          mixedCartonGrossWeight: Number(weight.toFixed(2))
-        };
-      }
-      return it;
-    });
-    setSoData({ ...soData, items: nextItems });
-    setCustomCartons(null);
-  };
-
   // Auto-fill smart defaults for all items in SO
   const handleAutoFillPackingDefaults = () => {
     if (!soData) return;
@@ -324,7 +515,7 @@ export const SalesDispatchView: React.FC = () => {
       let wt = 15.00;
 
       if (clean.includes('grinding wheel') || clean.includes('cutting wheel')) {
-        units = qty >= 150 ? 150 : (qty >= 100 ? 100 : qty);
+        units = qty >= 150 ? 150 : (qty >= 100 ? 100 : (qty >= 50 ? 50 : 10));
         wt = 18.50;
       } else if (clean.includes('vice')) {
         units = qty > 10 ? 2 : (qty > 5 ? 1 : qty);
@@ -376,7 +567,7 @@ export const SalesDispatchView: React.FC = () => {
     };
   }, [soData, packingSummary, customCartons]);
 
-  // Ensure customCartons is cloned when user edits in Section C
+  // Clone customCartons for editing in Section C
   const getEditableCartonsClone = (): Carton[] => {
     if (customCartons) return JSON.parse(JSON.stringify(customCartons));
     if (packingSummary) return JSON.parse(JSON.stringify(packingSummary.cartons));
@@ -484,10 +675,6 @@ export const SalesDispatchView: React.FC = () => {
     window.print();
   };
 
-  const handlePrintSingleLabel = () => {
-    window.print();
-  };
-
   // 1-Click Excel Downloads
   const handleDownloadPackagingExcel = () => {
     if (!activeSummary) return;
@@ -517,23 +704,24 @@ export const SalesDispatchView: React.FC = () => {
   }, [deductedSalesOrders]);
 
   // Compute live box badge for an item from generated cartons
-  const getItemBoxBadge = (item: SalesOrderItem): { text: string; isShared: boolean } => {
+  const getItemBoxBadge = (item: SalesOrderItem): { text: string; count: number; isShared: boolean } => {
     if (item.isPromoOrNonStock) {
       const promoCarton = activeSummary?.cartons.find(c => c.items.some(it => it.isPromoOrNonStock));
       return { 
-        text: promoCarton ? `Box ${promoCarton.cartonNo} (Promo)` : 'Last Box', 
+        text: promoCarton ? `Box #${promoCarton.cartonNo} (Promo)` : 'Last Box', 
+        count: 1,
         isShared: true 
       };
     }
 
-    if (!activeSummary) return { text: '—', isShared: false };
+    if (!activeSummary) return { text: '—', count: 0, isShared: false };
 
     const matchingCartons = activeSummary.cartons.filter(c => 
       c.items.some(it => it.cleanName === item.cleanItemName || it.id?.includes(`-${item.slNo}`) || it.id?.endsWith(`-${item.slNo}`))
     );
 
     if (matchingCartons.length === 0) {
-      return { text: '0 Boxes', isShared: false };
+      return { text: '0 Boxes', count: 0, isShared: false };
     }
 
     const boxNums = matchingCartons.map(c => c.cartonNo).sort((a, b) => a - b);
@@ -545,24 +733,29 @@ export const SalesDispatchView: React.FC = () => {
 
     if (count === 1) {
       return { 
-        text: isShared ? `Box ${minBox} (Shared)` : `Box ${minBox} (1 Box)`, 
+        text: isShared ? `Box #${minBox} (Shared)` : `Box #${minBox} (1 Box)`, 
+        count,
         isShared 
       };
     } else {
       return { 
-        text: `Box ${minBox}–${maxBox} (${count} Boxes)`, 
+        text: `Box #${minBox}–#${maxBox} (${count} Boxes)`, 
+        count,
         isShared: false 
       };
     }
   };
 
-  const promoItems = useMemo(() => {
-    return soData ? soData.items.filter(i => i.isPromoOrNonStock) : [];
-  }, [soData]);
-
-  const currentPromoBoxWeight = useMemo(() => {
-    return promoItems[0]?.mixedCartonGrossWeight || 6.50;
-  }, [promoItems]);
+  // Filtered SKUs for manual SKU mapping modal
+  const filteredSkusForMapping = useMemo(() => {
+    if (!skuSearchQuery.trim()) return skus.slice(0, 30);
+    const q = skuSearchQuery.toLowerCase();
+    return skus.filter(s => 
+      s.clean_name.toLowerCase().includes(q) || 
+      s.sku_code.toLowerCase().includes(q) ||
+      (s.original_tally_name && s.original_tally_name.toLowerCase().includes(q))
+    ).slice(0, 50);
+  }, [skus, skuSearchQuery]);
 
   return (
     <div className="space-y-5 p-3 sm:p-5 lg:p-6 w-full max-w-[1560px] mx-auto animate-in fade-in duration-150">
@@ -633,15 +826,15 @@ export const SalesDispatchView: React.FC = () => {
             <div className="mt-5 flex flex-wrap items-center justify-center gap-2 text-xs font-bold text-slate-600 dark:text-slate-300">
               <span className="flex items-center gap-1.5 rounded-lg bg-slate-100 px-3 py-1.5 dark:bg-slate-800">
                 <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-                <span>Single-Screen Workflow</span>
+                <span>Interactive Box Builder</span>
               </span>
               <span className="flex items-center gap-1.5 rounded-lg bg-slate-100 px-3 py-1.5 dark:bg-slate-800">
                 <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-                <span>Auto Multi-Box Split</span>
+                <span>Partial Dispatch Supported</span>
               </span>
               <span className="flex items-center gap-1.5 rounded-lg bg-slate-100 px-3 py-1.5 dark:bg-slate-800">
                 <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-                <span>1-Number Shared Box</span>
+                <span>Negative Stock Allowed</span>
               </span>
               <span className="flex items-center gap-1.5 rounded-lg bg-slate-100 px-3 py-1.5 dark:bg-slate-800">
                 <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
@@ -733,13 +926,13 @@ export const SalesDispatchView: React.FC = () => {
       )}
 
       {/* ========================================================================= */}
-      {/* ACTIVE SALES ORDER WORKSPACE — ALL ON ONE SINGLE SCREEN!                  */}
+      {/* ACTIVE SALES ORDER WORKSPACE                                              */}
       {/* ========================================================================= */}
       {soData && (
         <div className="space-y-5">
           
           {/* --------------------------------------------------------------------- */}
-          {/* SECTION A: COMPACT ORDER HEADER BAR (SINGLE SLIM ROW AT TOP)          */}
+          {/* SECTION A: ORDER HEADER BAR                                           */}
           {/* --------------------------------------------------------------------- */}
           <div className="rounded-2xl border border-slate-200 bg-white p-3.5 sm:p-4 shadow-xs dark:border-slate-800 dark:bg-slate-900">
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
@@ -809,12 +1002,12 @@ export const SalesDispatchView: React.FC = () => {
                 ) : (
                   <button
                     type="button"
-                    onClick={handleConfirmDeductStock}
-                    className="flex items-center gap-1.5 rounded-xl bg-orange-600 hover:bg-orange-700 text-white px-3.5 py-1.5 text-xs font-black shadow-xs transition active:scale-95"
-                    title="Confirm dispatch and deduct stock from inventory"
+                    onClick={handleInitiateDeductStock}
+                    className="flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 text-xs font-black shadow-md transition active:scale-95"
+                    title="Confirm dispatch and deduct stock from inventory (Negative stock allowed)"
                   >
                     <PackageCheck className="h-4 w-4" />
-                    <span>Confirm & Deduct Stock</span>
+                    <span>Confirm & Minus Stock</span>
                   </button>
                 )}
 
@@ -830,7 +1023,7 @@ export const SalesDispatchView: React.FC = () => {
 
                 <label className="flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 transition shadow-2xs cursor-pointer active:scale-95">
                   <Upload className="h-3.5 w-3.5 text-slate-500" />
-                  <span>Upload New SO (.xlsx)</span>
+                  <span>Upload New SO</span>
                   <input
                     ref={fileInputRef}
                     type="file"
@@ -844,49 +1037,244 @@ export const SalesDispatchView: React.FC = () => {
           </div>
 
           {/* --------------------------------------------------------------------- */}
-          {/* SECTION B: UNIFIED ALL-IN-ONE 8-COLUMN TABLE (100% WIDTH, ZERO SCROLL)*/}
+          {/* SECTION B: DEDICATED INTERACTIVE BOX BUILDER & PACKER                 */}
           {/* --------------------------------------------------------------------- */}
-          <div className="rounded-2xl border border-slate-200 bg-white shadow-xs dark:border-slate-800 dark:bg-slate-900 overflow-hidden">
-            <div className="p-3.5 sm:p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Boxes className="h-4 w-4 text-orange-600" />
-                <h2 className="text-xs sm:text-sm font-black text-slate-900 dark:text-white uppercase tracking-wider">
-                  Item Packing & Box Assignment Table ({soData.items.length} Items)
-                </h2>
+          <div 
+            ref={boxBuilderRef}
+            className="rounded-2xl border-2 border-orange-400/90 bg-gradient-to-br from-orange-50/90 via-white to-amber-50/60 p-4 sm:p-5 shadow-sm dark:border-orange-700 dark:from-slate-900 dark:via-slate-900 dark:to-orange-950/30"
+          >
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-orange-200 dark:border-orange-800/60 gap-2">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-orange-600 text-white shadow-2xs">
+                  <Boxes className="h-5 w-5" />
+                </div>
+                <div>
+                  <h2 className="text-sm sm:text-base font-black text-slate-900 dark:text-white flex items-center gap-2">
+                    <span>Interactive Manual Box Builder (डिब्बे और वज़न सेट करें)</span>
+                    <span className="text-[10px] font-mono font-bold text-orange-700 bg-orange-100 dark:bg-orange-950 dark:text-orange-300 px-2 py-0.5 rounded-md">
+                      Live Box Calculator
+                    </span>
+                  </h2>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Define pieces per box, gross weight, and starting box number (e.g. 20 Pcs order → 2 Boxes of 10 Pcs @ 10 Kg gross weight).
+                  </p>
+                </div>
               </div>
-              <div className="text-[11px] font-mono text-slate-500 font-bold">
-                Type directly in Qty / Box or Box Wt to auto-split cartons
+
+              <div className="flex items-center gap-2 self-start sm:self-auto">
+                <button
+                  type="button"
+                  onClick={() => setIsBuilderExpanded(!isBuilderExpanded)}
+                  className="flex items-center gap-1 text-xs font-bold text-orange-700 hover:text-orange-800 dark:text-orange-400 px-2 py-1 rounded-lg hover:bg-orange-100/60 transition"
+                >
+                  <SlidersHorizontal className="h-3.5 w-3.5" />
+                  <span>{isBuilderExpanded ? 'Hide Builder' : 'Open Box Builder'}</span>
+                </button>
               </div>
             </div>
 
-            <div className="w-full overflow-hidden">
-              <table className="w-full table-fixed border-collapse text-left border-b border-slate-200 dark:border-slate-800">
+            {isBuilderExpanded && (
+              <div className="mt-4 space-y-4">
+                {/* 5 Input Fields Grid */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                  {/* Field 1: Item Dropdown */}
+                  <div className="lg:col-span-2">
+                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                      1. Select Item to Pack:
+                    </label>
+                    <select
+                      value={builderItemSlNo}
+                      onChange={(e) => selectBuilderItem(parseInt(e.target.value, 10))}
+                      className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-900 dark:bg-slate-800 dark:border-slate-700 dark:text-white focus:outline-none focus:border-orange-500 shadow-2xs"
+                    >
+                      {soData.items.map(it => (
+                        <option key={it.slNo} value={it.slNo}>
+                          #{it.slNo} {it.cleanItemName} (Ordered: {Math.round(it.orderedQty)} Pcs)
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Field 2: Dispatch Quantity (Supports Partial Dispatch) */}
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                      2. Dispatch Qty (Pcs):
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={builderDispatchQty}
+                      onChange={(e) => setBuilderDispatchQty(e.target.value)}
+                      placeholder="e.g. 20"
+                      className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 font-mono text-xs font-black text-slate-900 dark:bg-slate-800 dark:border-slate-700 dark:text-white focus:outline-none focus:border-orange-500 text-center shadow-2xs"
+                    />
+                    {builderPreview && builderPreview.item && (
+                      <div className="text-[10px] text-slate-500 font-mono mt-1 text-center">
+                        Ordered: {Math.round(builderPreview.item.orderedQty)} • 
+                        {parseInt(builderDispatchQty, 10) < Math.round(builderPreview.item.orderedQty) ? (
+                          <span className="text-amber-600 font-bold ml-1">Partial Dispatch</span>
+                        ) : (
+                          <span className="text-emerald-600 font-bold ml-1">Full Dispatch</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Field 3: Pieces per Box */}
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                      3. Pieces in 1 Box:
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={builderUnitsPerBox}
+                      onChange={(e) => setBuilderUnitsPerBox(e.target.value)}
+                      placeholder="e.g. 10"
+                      className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 font-mono text-xs font-black text-slate-900 dark:bg-slate-800 dark:border-slate-700 dark:text-white focus:outline-none focus:border-orange-500 text-center shadow-2xs"
+                    />
+                    <div className="text-[10px] text-slate-500 font-mono mt-1 text-center">
+                      Units per carton
+                    </div>
+                  </div>
+
+                  {/* Field 4: Gross Weight Per Box */}
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                      4. Gross Weight / Box (Kg):
+                    </label>
+                    <input
+                      type="number"
+                      step={0.1}
+                      min={0.1}
+                      value={builderGrossWeight}
+                      onChange={(e) => setBuilderGrossWeight(e.target.value)}
+                      placeholder="e.g. 10.00"
+                      className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 font-mono text-xs font-black text-slate-900 dark:bg-slate-800 dark:border-slate-700 dark:text-white focus:outline-none focus:border-orange-500 text-center shadow-2xs"
+                    />
+                    <div className="text-[10px] text-slate-500 font-mono mt-1 text-center">
+                      Full carton weight in Kg
+                    </div>
+                  </div>
+                </div>
+
+                {/* Additional Optional Field: Starting Box Number & Action Button */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
+                  <div className="flex items-center gap-2 max-w-xs">
+                    <label className="text-xs font-bold text-slate-600 dark:text-slate-400 whitespace-nowrap">
+                      Start Box # (Optional):
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={builderStartBox}
+                      onChange={(e) => setBuilderStartBox(e.target.value)}
+                      placeholder="Auto"
+                      className="w-24 rounded-xl border border-slate-300 bg-white px-2.5 py-1.5 font-mono text-xs font-bold text-slate-900 dark:bg-slate-800 dark:border-slate-700 dark:text-white text-center focus:outline-none focus:border-orange-500"
+                    />
+                    <span className="text-[11px] text-slate-400">Leave empty for Auto sequential numbering</span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleApplyQuickBoxBuilder}
+                    className="flex items-center justify-center gap-2 rounded-xl bg-orange-600 hover:bg-orange-700 text-white px-6 py-2.5 text-xs font-black shadow-md transition active:scale-95"
+                  >
+                    <Check className="h-4 w-4" />
+                    <span>Apply Box Setup to Order</span>
+                  </button>
+                </div>
+
+                {/* LIVE VISUAL PREVIEW OF BOXES */}
+                {builderPreview && (
+                  <div className="rounded-xl border border-orange-200 bg-white/80 p-3.5 dark:border-slate-800 dark:bg-slate-900/80">
+                    <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-slate-100 dark:border-slate-800">
+                      <div className="flex items-center gap-2">
+                        <Scale className="h-4 w-4 text-orange-600" />
+                        <span className="text-xs font-black text-slate-900 dark:text-white">
+                          Live Carton Breakdown for "{builderPreview.item.cleanItemName}":
+                        </span>
+                      </div>
+                      <span className="rounded-md bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300 px-2.5 py-0.5 text-xs font-mono font-black">
+                        {builderPreview.totalBoxes} Cartons ({builderPreview.totalQty} Units • {(builderPreview.totalBoxes * builderPreview.grossWeight).toFixed(2)} Kg Gross Wt)
+                      </span>
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5">
+                      {builderPreview.boxesList.map((box, bIdx) => (
+                        <div 
+                          key={bIdx}
+                          className={`rounded-xl border p-2.5 flex flex-col justify-between ${
+                            box.isRemainder
+                              ? 'border-amber-300 bg-amber-50/70 dark:border-amber-800 dark:bg-amber-950/20'
+                              : 'border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-mono text-xs font-black text-slate-900 dark:text-white flex items-center gap-1.5">
+                              <Boxes className="h-3.5 w-3.5 text-orange-600" />
+                              <span>Box {box.boxNumberDisplay}</span>
+                            </span>
+                            {box.isRemainder && (
+                              <span className="rounded bg-amber-200 text-amber-900 text-[10px] font-bold px-1.5 py-0.2">
+                                Remainder
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="mt-2 flex items-center justify-between font-mono text-xs font-bold pt-2 border-t border-slate-100 dark:border-slate-700">
+                            <span className="text-slate-600 dark:text-slate-300">
+                              Qty: <strong className="text-slate-900 dark:text-white">{box.qty} Pcs</strong>
+                            </span>
+                            <span className="text-orange-700 dark:text-orange-400">
+                              {box.grossWeight.toFixed(2)} Kg
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* --------------------------------------------------------------------- */}
+          {/* SECTION C: ITEM PACKING & DISPATCH TABLE (WITH LIVE NEGATIVE STOCK)    */}
+          {/* --------------------------------------------------------------------- */}
+          <div className="rounded-2xl border border-slate-200 bg-white shadow-xs dark:border-slate-800 dark:bg-slate-900 overflow-hidden">
+            <div className="p-3.5 sm:p-4 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Truck className="h-4 w-4 text-orange-600" />
+                <h2 className="text-xs sm:text-sm font-black text-slate-900 dark:text-white uppercase tracking-wider">
+                  Item Packing & Live Warehouse Stock Table ({soData.items.length} Items)
+                </h2>
+              </div>
+              <div className="flex items-center gap-3 text-xs font-mono">
+                <span className="flex items-center gap-1 text-emerald-600 font-bold">
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                  <span>Partial Dispatch Supported</span>
+                </span>
+                <span className="flex items-center gap-1 text-rose-600 font-bold">
+                  <AlertTriangle className="h-3.5 w-3.5" />
+                  <span>Negative Stock Allowed</span>
+                </span>
+              </div>
+            </div>
+
+            <div className="w-full overflow-x-auto">
+              <table className="w-full min-w-[1000px] border-collapse text-left border-b border-slate-200 dark:border-slate-800">
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-100/90 text-xs font-black text-slate-700 uppercase dark:border-slate-800 dark:bg-slate-800 dark:text-slate-300 select-none">
-                    <th className="w-[4%] py-3 px-2 text-center border-r border-slate-200 dark:border-slate-800">
-                      #
-                    </th>
-                    <th className="w-[28%] py-3 px-3 border-r border-slate-200 dark:border-slate-800">
-                      Item Description & Division
-                    </th>
-                    <th className="w-[8%] py-3 px-2 text-right border-r border-slate-200 dark:border-slate-800">
-                      Order Qty
-                    </th>
-                    <th className="w-[12%] py-3 px-2 text-center border-r border-slate-200 dark:border-slate-800">
-                      In Stock
-                    </th>
-                    <th className="w-[10%] py-3 px-2 text-center border-r border-slate-200 dark:border-slate-800">
-                      Dispatch Qty
-                    </th>
-                    <th className="w-[11%] py-3 px-2 text-center border-r border-slate-200 dark:border-slate-800">
-                      Qty / Box
-                    </th>
-                    <th className="w-[11%] py-3 px-2 text-center border-r border-slate-200 dark:border-slate-800">
-                      Box Wt (Kg)
-                    </th>
-                    <th className="w-[16%] py-3 px-2 text-center">
-                      Box No. / Split
-                    </th>
+                    <th className="w-[4%] py-3 px-2 text-center border-r border-slate-200 dark:border-slate-800">#</th>
+                    <th className="w-[26%] py-3 px-3 border-r border-slate-200 dark:border-slate-800">Item Description</th>
+                    <th className="w-[8%] py-3 px-2 text-right border-r border-slate-200 dark:border-slate-800">Ordered</th>
+                    <th className="w-[10%] py-3 px-2 text-center border-r border-slate-200 dark:border-slate-800">Warehouse Stock</th>
+                    <th className="w-[11%] py-3 px-2 text-center border-r border-slate-200 dark:border-slate-800">Dispatch Qty</th>
+                    <th className="w-[11%] py-3 px-2 text-center border-r border-slate-200 dark:border-slate-800">Stock After Dispatch</th>
+                    <th className="w-[9%] py-3 px-2 text-center border-r border-slate-200 dark:border-slate-800">Qty / Box</th>
+                    <th className="w-[9%] py-3 px-2 text-center border-r border-slate-200 dark:border-slate-800">Box Wt (Kg)</th>
+                    <th className="w-[12%] py-3 px-2 text-center">Cartons Assigned</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 dark:divide-slate-800 font-sans text-xs sm:text-sm">
@@ -894,22 +1282,26 @@ export const SalesDispatchView: React.FC = () => {
                     const boxBadge = getItemBoxBadge(item);
                     const isPromo = item.isPromoOrNonStock;
 
+                    const curDispatchQty = typeof item.dispatchQty === 'number' ? Math.round(item.dispatchQty) : Math.round(item.orderedQty);
+                    const isPartial = curDispatchQty < Math.round(item.orderedQty);
+
+                    // Warehouse stock calculation
+                    const currentStock = item.matchedSku ? Math.round(item.matchedSku.current_stock) : 0;
+                    const projectedStock = currentStock - curDispatchQty;
+                    const willGoNegative = !isPromo && item.matchedSku && projectedStock < 0;
+
                     // Direct typed string values or current item values
                     const curDispatchQtyStr = rawInputMap[`${item.slNo}_dispatchQty`] !== undefined
                       ? rawInputMap[`${item.slNo}_dispatchQty`]
-                      : String(item.dispatchQty ?? item.orderedQty);
+                      : String(curDispatchQty);
 
                     const curUnitsPerBoxStr = rawInputMap[`${item.slNo}_unitsPerBox`] !== undefined
                       ? rawInputMap[`${item.slNo}_unitsPerBox`]
-                      : String(item.unitsPerBox || (typeof item.dispatchQty === 'number' ? item.dispatchQty : item.orderedQty));
+                      : String(item.unitsPerBox || (curDispatchQty > 10 ? 10 : curDispatchQty) || 10);
 
                     const curGrossWeightStr = rawInputMap[`${item.slNo}_grossWeight`] !== undefined
                       ? rawInputMap[`${item.slNo}_grossWeight`]
-                      : String(item.grossWeightPerBox || 15.00);
-
-                    const curAssignedBoxStr = rawInputMap[`${item.slNo}_assignedBox`] !== undefined
-                      ? rawInputMap[`${item.slNo}_assignedBox`]
-                      : (item.assignedBoxNo !== null && item.assignedBoxNo !== undefined ? String(item.assignedBoxNo) : '');
+                      : String(item.grossWeightPerBox || 10.00);
 
                     return (
                       <tr 
@@ -918,12 +1310,12 @@ export const SalesDispatchView: React.FC = () => {
                           isPromo ? 'bg-purple-50/20 dark:bg-purple-950/10' : ''
                         }`}
                       >
-                        {/* Col 1: Serial # (4%) */}
+                        {/* Col 1: Serial # */}
                         <td className="py-2.5 px-2 text-center font-bold text-slate-500 font-mono border-r border-slate-200 dark:border-slate-800 text-xs">
                           {idx + 1}
                         </td>
 
-                        {/* Col 2: Item Description & Division (28%) */}
+                        {/* Col 2: Item Description */}
                         <td className="py-2.5 px-3 border-r border-slate-200 dark:border-slate-800 min-w-0">
                           <div className="font-extrabold text-slate-900 dark:text-white whitespace-normal break-words leading-snug">
                             {item.cleanItemName}
@@ -941,186 +1333,192 @@ export const SalesDispatchView: React.FC = () => {
                               </span>
                             ) : null}
 
-                            {isPromo && (
+                            {isPromo ? (
                               <span className="rounded bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300 font-bold px-1.5 py-0.2">
                                 Promo Item
                               </span>
-                            )}
+                            ) : null}
 
-                            {item.matchedSku?.sub_category && (
-                              <span className="text-slate-400 truncate max-w-[150px]">
-                                {item.matchedSku.sub_category}
+                            {item.matchedSku ? (
+                              <span className="text-slate-400">
+                                SKU: {item.matchedSku.sku_code}
                               </span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setSkuMappingModal({ item })}
+                                className="flex items-center gap-1 rounded bg-amber-100 text-amber-800 px-1.5 py-0.5 text-[10px] font-bold hover:bg-amber-200 transition"
+                              >
+                                <Link2 className="h-3 w-3" />
+                                <span>Link Inventory SKU</span>
+                              </button>
                             )}
                           </div>
                         </td>
 
-                        {/* Col 3: Order Qty (8%) */}
+                        {/* Col 3: Order Qty */}
                         <td className="py-2.5 px-2 text-right font-black font-mono text-slate-900 dark:text-white border-r border-slate-200 dark:border-slate-800 tabular-nums">
                           {Math.round(item.orderedQty).toLocaleString()}
                         </td>
 
-                        {/* Col 4: In Stock (12%) */}
+                        {/* Col 4: Warehouse Stock (Current in Godown) */}
                         <td className="py-2.5 px-2 text-center border-r border-slate-200 dark:border-slate-800">
                           {isPromo ? (
                             <span className="text-slate-400 font-mono text-xs">—</span>
                           ) : (
                             <div className="flex items-center justify-center gap-1.5 flex-wrap">
                               {item.matchedSku ? (
-                                item.matchedSku.current_stock >= (item.dispatchQty ?? item.orderedQty) ? (
-                                  <span className="inline-flex items-center rounded-md px-1.5 py-0.5 text-xs font-bold font-mono bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-                                    {Math.round(item.matchedSku.current_stock)}
-                                  </span>
-                                ) : (
-                                  <span className="inline-flex items-center rounded-md px-1.5 py-0.5 text-xs font-bold font-mono bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300">
-                                    {Math.round(item.matchedSku.current_stock)}
-                                  </span>
-                                )
-                              ) : (
-                                <span className="inline-flex items-center rounded-md px-1.5 py-0.5 text-xs font-bold font-mono bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
-                                  0
+                                <span className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-xs font-bold font-mono ${
+                                  currentStock >= curDispatchQty 
+                                    ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' 
+                                    : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                                }`}>
+                                  {currentStock.toLocaleString()}
                                 </span>
+                              ) : (
+                                <span className="text-slate-400 text-xs font-mono">0</span>
                               )}
                               <button
                                 type="button"
                                 onClick={() => handleOpenQuickIn(item)}
-                                className="rounded-md bg-emerald-600 hover:bg-emerald-700 text-white px-1.5 py-0.5 text-xs font-black shadow-2xs transition active:scale-95"
-                                title="Add stock to inventory"
+                                className="rounded bg-emerald-600 hover:bg-emerald-700 text-white px-1.5 py-0.5 text-[10px] font-black transition active:scale-95"
+                                title="Add stock to warehouse"
                               >
-                                + IN
+                                +IN
                               </button>
                             </div>
                           )}
                         </td>
 
-                        {/* Col 5: Dispatch Qty (10%) */}
+                        {/* Col 5: Dispatch Qty (Partial Shipment Support) */}
                         <td className="py-2.5 px-2 text-center border-r border-slate-200 dark:border-slate-800">
-                          <input
-                            type="text"
-                            value={curDispatchQtyStr}
-                            onChange={(e) => {
-                              const val = e.target.value.replace(/[^0-9]/g, '');
-                              setRawInputMap(prev => ({ ...prev, [`${item.slNo}_dispatchQty`]: val }));
-                              if (val !== '') {
-                                handleUpdateDispatchQty(item.slNo, parseInt(val, 10));
-                              }
-                            }}
-                            onBlur={() => {
-                              const val = rawInputMap[`${item.slNo}_dispatchQty`];
-                              if (val === '' || isNaN(parseInt(val, 10))) {
-                                handleUpdateDispatchQty(item.slNo, Math.round(item.orderedQty));
-                              }
-                              setRawInputMap(prev => {
-                                const next = { ...prev };
-                                delete next[`${item.slNo}_dispatchQty`];
-                                return next;
-                              });
-                            }}
-                            className="w-full min-w-[64px] max-w-[96px] box-border rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-center font-mono text-xs sm:text-sm font-bold text-slate-900 focus:border-orange-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                          />
-                        </td>
-
-                        {/* Col 6: Qty / Box (11%) */}
-                        <td className="py-2.5 px-2 text-center border-r border-slate-200 dark:border-slate-800">
-                          {isPromo ? (
-                            <span className="inline-flex items-center rounded-lg bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 text-xs font-black px-2 py-1">
-                              Last Box
-                            </span>
-                          ) : (
+                          <div className="flex flex-col items-center gap-1">
                             <input
                               type="text"
-                              value={curUnitsPerBoxStr}
+                              value={curDispatchQtyStr}
                               onChange={(e) => {
                                 const val = e.target.value.replace(/[^0-9]/g, '');
-                                setRawInputMap(prev => ({ ...prev, [`${item.slNo}_unitsPerBox`]: val }));
+                                setRawInputMap(prev => ({ ...prev, [`${item.slNo}_dispatchQty`]: val }));
                                 if (val !== '') {
-                                  handleUpdateItemPacking(item.slNo, 'unitsPerBox', Math.max(1, parseInt(val, 10)));
+                                  handleUpdateDispatchQty(item.slNo, parseInt(val, 10));
                                 }
                               }}
                               onBlur={() => {
-                                const val = rawInputMap[`${item.slNo}_unitsPerBox`];
-                                if (val === '' || isNaN(parseInt(val, 10)) || parseInt(val, 10) <= 0) {
-                                  const def = typeof item.dispatchQty === 'number' ? item.dispatchQty : item.orderedQty;
-                                  handleUpdateItemPacking(item.slNo, 'unitsPerBox', Math.max(1, Math.round(def)));
+                                const val = rawInputMap[`${item.slNo}_dispatchQty`];
+                                if (val === '' || isNaN(parseInt(val, 10))) {
+                                  handleUpdateDispatchQty(item.slNo, Math.round(item.orderedQty));
                                 }
                                 setRawInputMap(prev => {
                                   const next = { ...prev };
-                                  delete next[`${item.slNo}_unitsPerBox`];
+                                  delete next[`${item.slNo}_dispatchQty`];
                                   return next;
                                 });
                               }}
-                              className="w-full min-w-[64px] max-w-[96px] box-border rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-center font-mono text-xs sm:text-sm font-bold text-slate-900 focus:border-orange-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                              className="w-20 rounded-lg border border-slate-300 bg-white px-2 py-1 text-center font-mono text-xs sm:text-sm font-bold text-slate-900 focus:border-orange-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                             />
-                          )}
+                            {isPartial && (
+                              <span className="rounded bg-amber-100 text-amber-800 text-[10px] font-black px-1.5 py-0.2">
+                                Partial ({curDispatchQty}/{Math.round(item.orderedQty)})
+                              </span>
+                            )}
+                          </div>
                         </td>
 
-                        {/* Col 7: Box Wt (Kg) (11%) */}
+                        {/* Col 6: Stock After Dispatch (Allows Negative Stock) */}
                         <td className="py-2.5 px-2 text-center border-r border-slate-200 dark:border-slate-800">
                           {isPromo ? (
                             <span className="text-slate-400 font-mono text-xs">—</span>
                           ) : (
-                            <input
-                              type="text"
-                              value={curGrossWeightStr}
-                              onChange={(e) => {
-                                const val = e.target.value.replace(/[^0-9.]/g, '');
-                                setRawInputMap(prev => ({ ...prev, [`${item.slNo}_grossWeight`]: val }));
-                                if (val !== '' && !isNaN(parseFloat(val))) {
-                                  handleUpdateItemPacking(item.slNo, 'grossWeightPerBox', parseFloat(val));
-                                }
-                              }}
-                              onBlur={() => {
-                                const val = rawInputMap[`${item.slNo}_grossWeight`];
-                                if (val === '' || isNaN(parseFloat(val)) || parseFloat(val) <= 0) {
-                                  handleUpdateItemPacking(item.slNo, 'grossWeightPerBox', 15.00);
-                                }
-                                setRawInputMap(prev => {
-                                  const next = { ...prev };
-                                  delete next[`${item.slNo}_grossWeight`];
-                                  return next;
-                                });
-                              }}
-                              className="w-full min-w-[64px] max-w-[96px] box-border rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-center font-mono text-xs sm:text-sm font-bold text-slate-900 focus:border-orange-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                            />
+                            <div className="flex flex-col items-center">
+                              <span className={`font-mono text-xs font-black ${
+                                willGoNegative 
+                                  ? 'text-rose-600 dark:text-rose-400' 
+                                  : 'text-emerald-700 dark:text-emerald-300'
+                              }`}>
+                                {projectedStock > 0 ? `+${projectedStock}` : projectedStock}
+                              </span>
+                              {willGoNegative && (
+                                <span className="rounded bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 text-[9px] font-bold px-1.5 py-0.2 mt-0.5">
+                                  Minus Stock (-ve)
+                                </span>
+                              )}
+                            </div>
                           )}
                         </td>
 
-                        {/* Col 8: Box No. / Split (16%) */}
+                        {/* Col 7: Qty / Box */}
+                        <td className="py-2.5 px-2 text-center border-r border-slate-200 dark:border-slate-800">
+                          <input
+                            type="text"
+                            value={curUnitsPerBoxStr}
+                            onChange={(e) => {
+                              const val = e.target.value.replace(/[^0-9]/g, '');
+                              setRawInputMap(prev => ({ ...prev, [`${item.slNo}_unitsPerBox`]: val }));
+                              if (val !== '') {
+                                handleUpdateItemPacking(item.slNo, 'unitsPerBox', Math.max(1, parseInt(val, 10)));
+                              }
+                            }}
+                            onBlur={() => {
+                              const val = rawInputMap[`${item.slNo}_unitsPerBox`];
+                              if (val === '' || isNaN(parseInt(val, 10)) || parseInt(val, 10) <= 0) {
+                                handleUpdateItemPacking(item.slNo, 'unitsPerBox', curDispatchQty > 10 ? 10 : curDispatchQty);
+                              }
+                              setRawInputMap(prev => {
+                                const next = { ...prev };
+                                delete next[`${item.slNo}_unitsPerBox`];
+                                return next;
+                              });
+                            }}
+                            className="w-16 rounded-lg border border-slate-300 bg-white px-2 py-1 text-center font-mono text-xs font-bold text-slate-900 focus:border-orange-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                          />
+                        </td>
+
+                        {/* Col 8: Box Wt (Kg) */}
+                        <td className="py-2.5 px-2 text-center border-r border-slate-200 dark:border-slate-800">
+                          <input
+                            type="text"
+                            value={curGrossWeightStr}
+                            onChange={(e) => {
+                              const val = e.target.value.replace(/[^0-9.]/g, '');
+                              setRawInputMap(prev => ({ ...prev, [`${item.slNo}_grossWeight`]: val }));
+                              if (val !== '' && !isNaN(parseFloat(val))) {
+                                handleUpdateItemPacking(item.slNo, 'grossWeightPerBox', parseFloat(val));
+                              }
+                            }}
+                            onBlur={() => {
+                              const val = rawInputMap[`${item.slNo}_grossWeight`];
+                              if (val === '' || isNaN(parseFloat(val)) || parseFloat(val) <= 0) {
+                                handleUpdateItemPacking(item.slNo, 'grossWeightPerBox', 10.00);
+                              }
+                              setRawInputMap(prev => {
+                                const next = { ...prev };
+                                delete next[`${item.slNo}_grossWeight`];
+                                return next;
+                              });
+                            }}
+                            className="w-18 rounded-lg border border-slate-300 bg-white px-2 py-1 text-center font-mono text-xs font-bold text-slate-900 focus:border-orange-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                          />
+                        </td>
+
+                        {/* Col 9: Cartons Assigned & Setup Trigger */}
                         <td className="py-2.5 px-2 text-center min-w-0">
-                          {isPromo ? (
-                            <span className="inline-flex items-center rounded-lg bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 text-xs font-bold px-2 py-1">
-                              Final Box (Mixed)
+                          <div className="flex flex-col items-center gap-1.5">
+                            <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-bold font-mono whitespace-nowrap ${
+                              boxBadge.isShared
+                                ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                                : 'bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300'
+                            }`}>
+                              {boxBadge.text}
                             </span>
-                          ) : (
-                            <div className="flex items-center justify-center gap-1.5 flex-wrap">
-                              <input
-                                type="text"
-                                placeholder="Auto"
-                                value={curAssignedBoxStr}
-                                onChange={(e) => {
-                                  const val = e.target.value.replace(/[^0-9]/g, '');
-                                  setRawInputMap(prev => ({ ...prev, [`${item.slNo}_assignedBox`]: val }));
-                                  handleAssignItemToBox(item.slNo, val);
-                                }}
-                                onBlur={() => {
-                                  setRawInputMap(prev => {
-                                    const next = { ...prev };
-                                    delete next[`${item.slNo}_assignedBox`];
-                                    return next;
-                                  });
-                                }}
-                                className="w-14 min-w-[48px] max-w-[64px] box-border rounded-lg border border-slate-300 bg-white px-1.5 py-1 text-center font-mono text-xs font-bold text-slate-900 focus:border-orange-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                                title="Leave empty for Auto sequential numbering, or type a box number (e.g. 7) to pack in a shared box"
-                              />
-                              <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-bold font-mono whitespace-nowrap ${
-                                boxBadge.isShared
-                                  ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
-                                  : 'bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300'
-                              }`}>
-                                {boxBadge.text}
-                              </span>
-                            </div>
-                          )}
+                            <button
+                              type="button"
+                              onClick={() => handleSelectBuilderItemAndScroll(item.slNo)}
+                              className="text-[10px] font-bold text-orange-600 hover:text-orange-700 hover:underline flex items-center gap-1"
+                            >
+                              <SlidersHorizontal className="h-3 w-3" />
+                              <span>Box Setup</span>
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -1129,49 +1527,13 @@ export const SalesDispatchView: React.FC = () => {
               </table>
             </div>
 
-            {/* Compact Footer Bar for Promo Box Weight & Items */}
-            <div className="p-3.5 sm:p-4 bg-slate-50 dark:bg-slate-800/60 border-t border-slate-200 dark:border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-3">
-              <div className="flex flex-wrap items-center gap-3">
-                {promoItems.length > 0 && (
-                  <div className="flex items-center gap-2 bg-white dark:bg-slate-900 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs">
-                    <span className="text-xs font-bold text-slate-700 dark:text-slate-300 whitespace-nowrap">
-                      Final Promo Box Weight (Kg):
-                    </span>
-                    <input
-                      type="number"
-                      step={0.1}
-                      min={0.1}
-                      value={currentPromoBoxWeight}
-                      onChange={(e) => handleUpdatePromoBoxWeight(parseFloat(e.target.value) || 6.50)}
-                      className="w-18 rounded-lg border border-slate-300 bg-slate-50 px-2 py-1 text-center font-mono text-xs font-bold text-slate-900 focus:border-orange-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                    />
-                    <span className="text-xs font-bold text-slate-500 font-mono">Kg</span>
-                  </div>
-                )}
-
-                {/* Promo item inclusion checkboxes */}
-                {promoItems.length > 0 && (
-                  <div className="flex flex-wrap items-center gap-2">
-                    {promoItems.map(pi => (
-                      <label 
-                        key={pi.slNo} 
-                        className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-900 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 cursor-pointer hover:border-orange-400"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={pi.selectedForLastBox !== false}
-                          onChange={() => handleTogglePromoForLastBox(pi.slNo)}
-                          className="rounded text-orange-600 focus:ring-orange-500"
-                        />
-                        <span className="truncate max-w-[120px]">{pi.cleanItemName}</span>
-                        <span className="font-mono text-[10px] text-slate-400">({pi.orderedQty})</span>
-                      </label>
-                    ))}
-                  </div>
-                )}
+            {/* Table Footer Actions */}
+            <div className="p-3.5 sm:p-4 bg-slate-50 dark:bg-slate-800/60 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="text-xs text-slate-500">
+                Tip: Click <strong>"Box Setup"</strong> on any item to view its box breakdown, set pieces per carton, and gross weight.
               </div>
 
-              <div className="flex items-center gap-2 self-end md:self-auto shrink-0">
+              <div className="flex items-center gap-2 self-end sm:self-auto">
                 <button
                   type="button"
                   onClick={handleAutoFillPackingDefaults}
@@ -1179,21 +1541,21 @@ export const SalesDispatchView: React.FC = () => {
                   title="Auto-fill standard carton units and weights"
                 >
                   <RotateCcw className="h-3.5 w-3.5 text-slate-500" />
-                  <span>Auto-Fill Defaults</span>
+                  <span>Auto Fill Defaults</span>
                 </button>
               </div>
             </div>
           </div>
 
           {/* --------------------------------------------------------------------- */}
-          {/* SECTION C: LIVE PACKING LIST & PRINTABLE BOX STICKERS (ON SAME SCREEN)*/}
+          {/* SECTION D: EDITABLE PACKING LIST TABLE & BOX STICKERS                 */}
           {/* --------------------------------------------------------------------- */}
           {activeSummary && (
-            <div className="rounded-2xl border border-slate-200 bg-white shadow-xs dark:border-slate-800 dark:bg-slate-900 p-4 sm:p-6 space-y-4">
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 shadow-xs dark:border-slate-800 dark:bg-slate-900 space-y-4">
               
-              {/* Output Header Bar: View Switcher Tabs + Action Buttons */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800 gap-3 no-print">
-                <div className="flex items-center gap-2">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800 gap-3">
+                {/* Switcher: Packing List Table vs Box Stickers */}
+                <div className="flex items-center gap-2 no-print">
                   <button
                     type="button"
                     onClick={() => setOutputTab('packing-list')}
@@ -1221,7 +1583,7 @@ export const SalesDispatchView: React.FC = () => {
                   </button>
                 </div>
 
-                {/* Right Actions: 1-Click Print & Excel Downloads */}
+                {/* Right Actions: Print & Excel Downloads */}
                 <div className="flex flex-wrap items-center gap-2">
                   {customCartons && (
                     <button
@@ -1270,7 +1632,7 @@ export const SalesDispatchView: React.FC = () => {
               {/* VIEW 1: LIVE EDITABLE PACKING LIST TABLE */}
               {outputTab === 'packing-list' && (
                 <div className="space-y-3 font-sans">
-                  {/* Slim Order Meta Header */}
+                  {/* Order Meta Header */}
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b-2 border-slate-900 dark:border-slate-100 gap-2 font-mono text-xs sm:text-sm">
                     <div className="flex items-center gap-2 font-bold text-slate-900 dark:text-white">
                       <span className="text-slate-500 uppercase">Party Name :</span>
@@ -1289,25 +1651,15 @@ export const SalesDispatchView: React.FC = () => {
                   </div>
 
                   {/* Table with directly typeable cells */}
-                  <div className="w-full overflow-hidden">
-                    <table className="w-full table-fixed border-collapse text-left border border-slate-300 dark:border-slate-700">
+                  <div className="w-full overflow-x-auto">
+                    <table className="w-full min-w-[700px] border-collapse text-left border border-slate-300 dark:border-slate-700">
                       <thead>
                         <tr className="border-b-2 border-slate-300 bg-slate-100 text-xs sm:text-sm font-extrabold text-slate-800 uppercase dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
-                          <th className="w-[14%] py-2.5 px-3 text-center border-r border-slate-300 dark:border-slate-700">
-                            Carton No.
-                          </th>
-                          <th className="w-[50%] py-2.5 px-3 border-r border-slate-300 dark:border-slate-700">
-                            Item Name
-                          </th>
-                          <th className="w-[14%] py-2.5 px-3 text-right border-r border-slate-300 dark:border-slate-700">
-                            Qty
-                          </th>
-                          <th className="w-[14%] py-2.5 px-3 text-right border-r border-slate-300 dark:border-slate-700">
-                            Gross Wt. (Kg)
-                          </th>
-                          <th className="w-[8%] py-2.5 px-2 text-center no-print">
-                            Action
-                          </th>
+                          <th className="w-[14%] py-2.5 px-3 text-center border-r border-slate-300 dark:border-slate-700">Carton No.</th>
+                          <th className="w-[50%] py-2.5 px-3 border-r border-slate-300 dark:border-slate-700">Item Name</th>
+                          <th className="w-[14%] py-2.5 px-3 text-right border-r border-slate-300 dark:border-slate-700">Qty</th>
+                          <th className="w-[14%] py-2.5 px-3 text-right border-r border-slate-300 dark:border-slate-700">Gross Wt. (Kg)</th>
+                          <th className="w-[8%] py-2.5 px-2 text-center no-print">Action</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-200 dark:divide-slate-700 font-mono text-xs sm:text-sm">
@@ -1404,7 +1756,7 @@ export const SalesDispatchView: React.FC = () => {
                           });
                         })}
 
-                        {/* Total Footer Rows matching Packaging list.xlsx */}
+                        {/* Total Footer Rows */}
                         <tr className="border-t-2 border-slate-900 bg-slate-50 font-black text-slate-900 dark:border-slate-100 dark:bg-slate-800/80 dark:text-white">
                           <td className="py-2.5 px-3 text-center border-r border-slate-200 dark:border-slate-700">
                             Total
@@ -1436,7 +1788,7 @@ export const SalesDispatchView: React.FC = () => {
                 </div>
               )}
 
-              {/* VIEW 2: EDITABLE BOX LABELS / STICKERS */}
+              {/* VIEW 2: BOX LABELS / STICKERS */}
               {outputTab === 'box-labels' && (
                 <div className="space-y-4">
                   {/* Single vs All Switcher */}
@@ -1505,13 +1857,6 @@ export const SalesDispatchView: React.FC = () => {
                             isPromoBox ? 'border-purple-600 dark:border-purple-400' : 'border-slate-900 dark:border-slate-200'
                           }`}
                         >
-                          {/* Promo Last Box Badge */}
-                          {isPromoBox && (
-                            <div className="absolute top-2 right-2 rounded bg-purple-100 text-purple-800 text-[10px] font-black uppercase px-2 py-0.5 no-print">
-                              Final Promo Box (Bottom)
-                            </div>
-                          )}
-
                           {/* Header Block: Carton# | Shipping Mark | PI# */}
                           <div className="grid grid-cols-3 border-b-2 border-slate-900 pb-2.5 dark:border-slate-200 font-mono">
                             <div>
@@ -1626,7 +1971,101 @@ export const SalesDispatchView: React.FC = () => {
       )}
 
       {/* ========================================================================= */}
-      {/* QUICK STOCK IN MODAL                                                      */}
+      {/* MODAL 1: NEGATIVE STOCK DISPATCH CONFIRMATION                             */}
+      {/* ========================================================================= */}
+      {negativeStockModal && negativeStockModal.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs animate-in fade-in">
+          <div 
+            className="w-full max-w-xl overflow-hidden rounded-3xl border border-rose-300 bg-white shadow-2xl transition-all dark:border-rose-900 dark:bg-slate-900"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-5 border-b border-rose-200 dark:border-rose-900/60 flex items-center justify-between bg-rose-50/60 dark:bg-rose-950/30">
+              <div className="flex items-center gap-2.5">
+                <div className="h-10 w-10 rounded-xl bg-rose-100 dark:bg-rose-900/60 text-rose-700 dark:text-rose-300 flex items-center justify-center font-black">
+                  <AlertTriangle className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm sm:text-base font-black text-slate-900 dark:text-white">
+                    Confirm Dispatch with Negative Stock (स्टॉक माइनस होगा)
+                  </h3>
+                  <p className="text-xs text-rose-700 dark:text-rose-400 font-medium">
+                    Order quantity exceeds available warehouse stock. Negative stock is fully allowed.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setNegativeStockModal(null)}
+                className="rounded-lg p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <p className="text-xs text-slate-600 dark:text-slate-300">
+                Aapke paas neeche di gayi items ka stock kam hai. Agar aap dispatch confirm karte hain, to ye item inventory mein <strong className="text-rose-600 dark:text-rose-400 font-bold">Negative (-ve)</strong> chali jayengi, jo system mein fully supported hai:
+              </p>
+
+              <div className="rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+                <table className="w-full text-left text-xs font-mono">
+                  <thead className="bg-slate-100 dark:bg-slate-800 text-[11px] font-black uppercase text-slate-700 dark:text-slate-300 border-b border-slate-200 dark:border-slate-700">
+                    <tr>
+                      <th className="py-2 px-3">Item Description</th>
+                      <th className="py-2 px-2 text-right">In Stock</th>
+                      <th className="py-2 px-2 text-right">Dispatching</th>
+                      <th className="py-2 px-3 text-right">New Stock</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {negativeStockModal.negativeItems.map((n, i) => (
+                      <tr key={i} className="hover:bg-rose-50/30 dark:hover:bg-rose-950/20">
+                        <td className="py-2 px-3 font-bold text-slate-900 dark:text-white font-sans">
+                          {n.item.cleanItemName}
+                        </td>
+                        <td className="py-2 px-2 text-right text-slate-600 dark:text-slate-400">
+                          {n.currentStock}
+                        </td>
+                        <td className="py-2 px-2 text-right font-bold text-slate-900 dark:text-white">
+                          {n.dispatchQty}
+                        </td>
+                        <td className="py-2 px-3 text-right font-black text-rose-600 dark:text-rose-400 bg-rose-50/50 dark:bg-rose-950/40">
+                          {n.newStock}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/60 p-3 text-xs text-amber-800 dark:text-amber-300">
+                💡 <strong>Warehouse Note:</strong> Dispatch confirm karne par Stock Master mein in items ke saamne <strong>Red Tag (-ve)</strong> show hoga aur new stock inward hote hi ye balance out ho jayengi.
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setNegativeStockModal(null)}
+                  className="rounded-xl border border-slate-300 px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmDeductStock}
+                  className="rounded-xl bg-rose-600 hover:bg-rose-700 text-white px-5 py-2 text-xs font-black shadow-md transition active:scale-95 flex items-center gap-1.5"
+                >
+                  <PackageCheck className="h-4 w-4" />
+                  <span>Yes, Confirm & Minus Stock</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL 2: QUICK STOCK IN MODAL                                             */}
       {/* ========================================================================= */}
       {quickInModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs animate-in fade-in">
@@ -1669,9 +2108,9 @@ export const SalesDispatchView: React.FC = () => {
                   </span>
                 </div>
                 <div className="flex items-center justify-between text-xs text-slate-500 font-mono mt-1">
-                  <span>Sales Order Ordered Qty:</span>
+                  <span>Sales Order Dispatch Qty:</span>
                   <span className="font-bold text-orange-600 dark:text-orange-400">
-                    {Math.round(quickInModal.item.orderedQty)} Pcs
+                    {Math.round(quickInModal.item.dispatchQty ?? quickInModal.item.orderedQty)} Pcs
                   </span>
                 </div>
               </div>
@@ -1718,6 +2157,98 @@ export const SalesDispatchView: React.FC = () => {
                 >
                   <Check className="h-4 w-4" />
                   <span>Confirm Stock IN (+{quickInModal.inQty})</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL 3: MANUAL SKU MAPPING MODAL                                         */}
+      {/* ========================================================================= */}
+      {skuMappingModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs animate-in fade-in">
+          <div 
+            className="w-full max-w-xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl transition-all dark:border-slate-800 dark:bg-slate-900"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="h-9 w-9 rounded-xl bg-orange-100 dark:bg-orange-950 text-orange-700 dark:text-orange-300 flex items-center justify-center font-black">
+                  <Link2 className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-slate-900 dark:text-white">
+                    Link Item to Warehouse SKU
+                  </h3>
+                  <p className="text-xs text-slate-500 font-mono">
+                    Match item to track live warehouse stock & deduct on dispatch
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSkuMappingModal(null)}
+                className="rounded-lg p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="rounded-xl bg-slate-50 dark:bg-slate-800/60 p-3 border border-slate-200 dark:border-slate-700">
+                <span className="text-xs text-slate-500 font-bold block">Selected Sales Order Item:</span>
+                <span className="text-xs font-black text-slate-900 dark:text-white font-sans mt-0.5 block">
+                  #{skuMappingModal.item.slNo} {skuMappingModal.item.cleanItemName}
+                </span>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                  Search Warehouse SKU by Name or Code:
+                </label>
+                <input
+                  type="text"
+                  value={skuSearchQuery}
+                  onChange={(e) => setSkuSearchQuery(e.target.value)}
+                  placeholder="e.g. GRINDING WHEEL 100 or DIM-001..."
+                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-900 dark:bg-slate-800 dark:border-slate-700 dark:text-white focus:outline-none focus:border-orange-500"
+                  autoFocus
+                />
+              </div>
+
+              <div className="max-h-60 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
+                {filteredSkusForMapping.map(sku => (
+                  <div 
+                    key={sku.id}
+                    onClick={() => handleMapSkuToItem(sku)}
+                    className="p-2.5 hover:bg-orange-50 dark:hover:bg-slate-800 cursor-pointer flex items-center justify-between gap-2 transition"
+                  >
+                    <div>
+                      <div className="text-xs font-bold text-slate-900 dark:text-white">
+                        {sku.clean_name}
+                      </div>
+                      <div className="text-[10px] text-slate-400 font-mono">
+                        {sku.division} • {sku.sku_code} • {sku.main_category}
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <span className="rounded bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-mono text-xs font-bold px-2 py-0.5">
+                        Stock: {Math.round(sku.current_stock)}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex items-center justify-end pt-2">
+                <button
+                  type="button"
+                  onClick={() => setSkuMappingModal(null)}
+                  className="rounded-xl border border-slate-300 px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300"
+                >
+                  Cancel
                 </button>
               </div>
             </div>
