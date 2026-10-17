@@ -25,7 +25,8 @@ import {
   Scale,
   Layers,
   HelpCircle,
-  AlertCircle
+  AlertCircle,
+  Hash
 } from 'lucide-react';
 import { useInventoryStore, DeductedSOInfo } from '../store/useInventoryStore';
 import { 
@@ -249,6 +250,31 @@ export const SalesDispatchView: React.FC = () => {
     }
   };
 
+  // Delete / Remove Item from Sales Order Dispatch List
+  const handleDeleteItem = (slNo: number) => {
+    if (!soData) return;
+    const targetItem = soData.items.find(i => i.slNo === slNo);
+    if (!targetItem) return;
+
+    const nextItems = soData.items
+      .filter(i => i.slNo !== slNo)
+      .map((it, idx) => ({
+        ...it,
+        slNo: idx + 1
+      }));
+
+    setSoData({
+      ...soData,
+      items: nextItems
+    });
+    setCustomCartons(null);
+    setRawInputMap({});
+    if (builderItemSlNo === slNo) {
+      setBuilderItemSlNo(nextItems[0]?.slNo ?? '');
+    }
+    setSuccessMessage(`Removed "${targetItem.cleanItemName}" from dispatch list. Box numbers updated.`);
+  };
+
   // Open Quick Stock IN Modal for Shortage Item
   const handleOpenQuickIn = (item: SalesOrderItem) => {
     const currentStock = item.matchedSku ? Math.round(item.matchedSku.current_stock) : 0;
@@ -415,6 +441,42 @@ export const SalesDispatchView: React.FC = () => {
     }
   };
 
+  // Sequential starting box calculation for the selected item in Box Builder
+  const autoStartBox = useMemo(() => {
+    if (!soData || builderItemSlNo === '') return 1;
+    const item = soData.items.find(i => i.slNo === builderItemSlNo);
+    if (!item) return 1;
+
+    // If explicit box number was already assigned, use it
+    if (item.assignedBoxNo) return item.assignedBoxNo;
+
+    // Promo items go to last box
+    if (item.isPromoOrNonStock) {
+      let toolBoxCount = 0;
+      soData.items.forEach(it => {
+        if (!it.isPromoOrNonStock) {
+          const q = typeof it.dispatchQty === 'number' ? it.dispatchQty : it.orderedQty;
+          const u = Math.max(1, it.unitsPerBox || q);
+          toolBoxCount += Math.ceil(q / u);
+        }
+      });
+      return Math.max(1, toolBoxCount + 1);
+    }
+
+    // Tool items: sum of boxes needed by all preceding tool items + 1
+    let cumulativeBoxes = 0;
+    for (const it of soData.items) {
+      if (it.slNo === item.slNo) break;
+      if (it.isPromoOrNonStock) continue;
+      const q = typeof it.dispatchQty === 'number' ? it.dispatchQty : it.orderedQty;
+      if (q <= 0) continue;
+      const u = Math.max(1, it.unitsPerBox || q);
+      cumulativeBoxes += Math.ceil(q / u);
+    }
+
+    return cumulativeBoxes + 1;
+  }, [soData, builderItemSlNo]);
+
   // Live preview calculation for the selected item in Box Builder
   const builderPreview = useMemo(() => {
     if (!soData || builderItemSlNo === '') return null;
@@ -424,7 +486,7 @@ export const SalesDispatchView: React.FC = () => {
     const totalQty = parseInt(builderDispatchQty, 10) || (typeof item.dispatchQty === 'number' ? Math.round(item.dispatchQty) : Math.round(item.orderedQty));
     const unitsPerBox = Math.max(1, parseInt(builderUnitsPerBox, 10) || totalQty);
     const grossWeight = parseFloat(builderGrossWeight) || 10.00;
-    const startBoxNum = builderStartBox.trim() === '' ? null : Math.max(1, parseInt(builderStartBox, 10) || 1);
+    const startBoxNum = builderStartBox.trim() === '' ? autoStartBox : Math.max(1, parseInt(builderStartBox, 10) || 1);
 
     if (totalQty <= 0) return null;
 
@@ -447,7 +509,7 @@ export const SalesDispatchView: React.FC = () => {
         ? Number(((boxQty / unitsPerBox) * grossWeight).toFixed(2))
         : Number(grossWeight.toFixed(2));
 
-      const boxNoDisplay = startBoxNum !== null ? `#${startBoxNum + b}` : `Auto (#${b + 1})`;
+      const boxNoDisplay = `#${startBoxNum + b}`;
 
       boxesList.push({
         boxIndex: b + 1,
@@ -469,7 +531,7 @@ export const SalesDispatchView: React.FC = () => {
       remainderQty,
       boxesList
     };
-  }, [soData, builderItemSlNo, builderUnitsPerBox, builderGrossWeight, builderStartBox, builderDispatchQty]);
+  }, [soData, builderItemSlNo, builderUnitsPerBox, builderGrossWeight, builderStartBox, builderDispatchQty, autoStartBox]);
 
   // Apply Builder configuration to active soData
   const handleApplyQuickBoxBuilder = () => {
@@ -484,14 +546,14 @@ export const SalesDispatchView: React.FC = () => {
         dispatchQty: newDispatchQty,
         unitsPerBox: builderPreview.unitsPerBox,
         grossWeightPerBox: builderPreview.grossWeight,
-        assignedBoxNo: builderPreview.startBoxNum
+        assignedBoxNo: builderStartBox.trim() === '' ? null : builderPreview.startBoxNum
       };
     });
 
     setSoData({ ...soData, items: nextItems });
     setCustomCartons(null);
     setSuccessMessage(
-      `Applied Box Setup for "${item.cleanItemName}": ${builderPreview.totalBoxes} Boxes (${builderPreview.unitsPerBox} Pcs/Box @ ${builderPreview.grossWeight} Kg) starting at Box ${builderPreview.startBoxNum !== null ? '#' + builderPreview.startBoxNum : 'Auto'}!`
+      `Applied Box Setup for "${item.cleanItemName}": ${builderPreview.totalBoxes} Boxes (${builderPreview.unitsPerBox} Pcs/Box @ ${builderPreview.grossWeight} Kg) as Box ${builderPreview.boxesList.map(b => b.boxNumberDisplay).join(', ')}!`
     );
   };
 
@@ -610,12 +672,23 @@ export const SalesDispatchView: React.FC = () => {
         targetCarton.grossWeightKg = newWeight;
       }
     } else if (field === 'cartonNo') {
-      targetCarton.cartonNo = Math.max(1, parseInt(value, 10) || 1);
+      const num = parseInt(value, 10);
+      targetCarton.cartonNo = isNaN(num) ? 0 : Math.max(0, num);
     } else {
       (targetCarton as any)[field] = value;
     }
 
     setCustomCartons(list);
+  };
+
+  // Renumber all cartons sequentially 1 to N
+  const handleAutoRenumberCartons = () => {
+    const list = getEditableCartonsClone();
+    list.forEach((carton, idx) => {
+      carton.cartonNo = idx + 1;
+    });
+    setCustomCartons(list);
+    setSuccessMessage(`Re-sequenced carton numbers 1 to ${list.length}.`);
   };
 
   // Update item-level field inside a carton (Item Name, Qty, Weight)
@@ -719,46 +792,66 @@ export const SalesDispatchView: React.FC = () => {
   }, [deductedSalesOrders]);
 
   // Compute live box badge for an item from generated cartons
-  const getItemBoxBadge = (item: SalesOrderItem): { text: string; count: number; isShared: boolean } => {
+  const getItemBoxBadge = (item: SalesOrderItem): { 
+    text: string; 
+    subText: string; 
+    boxNums: number[]; 
+    count: number; 
+    isShared: boolean; 
+    isPromo: boolean 
+  } => {
     if (item.isPromoOrNonStock) {
-      const promoCarton = activeSummary?.cartons.find(c => c.items.some(it => it.isPromoOrNonStock));
+      const promoCarton = activeSummary?.cartons.find(c => 
+        c.items.some(it => it.sourceItemSlNo === item.slNo || it.isPromoOrNonStock)
+      );
+      const cNo = promoCarton ? promoCarton.cartonNo : (activeSummary?.totalBoxes || 'Last');
       return { 
-        text: promoCarton ? `Box #${promoCarton.cartonNo} (Promo)` : 'Last Box', 
+        text: `Box #${cNo}`, 
+        subText: 'Last Box (Promo)', 
+        boxNums: promoCarton ? [promoCarton.cartonNo] : [],
         count: 1,
-        isShared: true 
+        isShared: true,
+        isPromo: true 
       };
     }
 
-    if (!activeSummary) return { text: '—', count: 0, isShared: false };
+    if (!activeSummary) return { text: '—', subText: '', boxNums: [], count: 0, isShared: false, isPromo: false };
 
     const matchingCartons = activeSummary.cartons.filter(c => 
-      c.items.some(it => it.cleanName === item.cleanItemName || it.id?.includes(`-${item.slNo}`) || it.id?.endsWith(`-${item.slNo}`))
+      c.items.some(it => (it.sourceItemSlNo !== undefined ? it.sourceItemSlNo === item.slNo : it.cleanName === item.cleanItemName))
     );
 
     if (matchingCartons.length === 0) {
-      return { text: '0 Boxes', count: 0, isShared: false };
+      return { text: 'No Box', subText: '0 Qty', boxNums: [], count: 0, isShared: false, isPromo: false };
     }
 
-    const boxNums = matchingCartons.map(c => c.cartonNo).sort((a, b) => a - b);
+    const boxNums = Array.from(new Set(matchingCartons.map(c => c.cartonNo))).sort((a, b) => a - b);
     const minBox = boxNums[0];
     const maxBox = boxNums[boxNums.length - 1];
     const count = boxNums.length;
+    const isShared = matchingCartons.some(c => c.items.length > 1);
 
-    const isShared = matchingCartons.some(c => c.items.length > 1 && !c.items.every(it => it.cleanName === item.cleanItemName));
-
+    let text = '';
     if (count === 1) {
-      return { 
-        text: isShared ? `Box #${minBox} (Shared)` : `Box #${minBox} (1 Box)`, 
-        count,
-        isShared 
-      };
+      text = `Box #${minBox}`;
+    } else if (count === 2) {
+      text = `Box #${minBox}, #${maxBox}`;
+    } else if (maxBox - minBox + 1 === count) {
+      text = `Box #${minBox}–#${maxBox}`;
     } else {
-      return { 
-        text: `Box #${minBox}–#${maxBox} (${count} Boxes)`, 
-        count,
-        isShared: false 
-      };
+      text = `Box ${boxNums.map(n => `#${n}`).join(', ')}`;
     }
+
+    const subText = `${count} ${count === 1 ? 'Box' : 'Boxes'}${isShared ? ' (Shared)' : ''}`;
+
+    return { 
+      text,
+      subText,
+      boxNums,
+      count,
+      isShared,
+      isPromo: false 
+    };
   };
 
   // Filtered SKUs for manual SKU mapping modal
@@ -1182,10 +1275,12 @@ export const SalesDispatchView: React.FC = () => {
                       min={1}
                       value={builderStartBox}
                       onChange={(e) => setBuilderStartBox(e.target.value)}
-                      placeholder="Auto"
-                      className="w-24 rounded-xl border border-slate-300 bg-white px-2.5 py-1.5 font-mono text-xs font-bold text-slate-900 dark:bg-slate-800 dark:border-slate-700 dark:text-white text-center focus:outline-none focus:border-orange-500"
+                      placeholder={`Auto (#${autoStartBox})`}
+                      className="w-28 rounded-xl border border-slate-300 bg-white px-2.5 py-1.5 font-mono text-xs font-bold text-slate-900 dark:bg-slate-800 dark:border-slate-700 dark:text-white text-center focus:outline-none focus:border-orange-500"
                     />
-                    <span className="text-[11px] text-slate-400">Leave empty for Auto sequential numbering</span>
+                    <span className="text-[11px] text-slate-500 font-mono">
+                      Sequential default: starts at <strong>Box #{autoStartBox}</strong>
+                    </span>
                   </div>
 
                   <button
@@ -1275,22 +1370,23 @@ export const SalesDispatchView: React.FC = () => {
               </div>
             </div>
 
-            <div className="w-full overflow-x-auto">
-              <table className="w-full min-w-[1000px] border-collapse text-left border-b border-slate-200 dark:border-slate-800">
+            <div className="w-full">
+              <table className="w-full table-fixed border-collapse text-left border-b border-slate-200 dark:border-slate-800 text-xs">
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-100/90 text-xs font-black text-slate-700 uppercase dark:border-slate-800 dark:bg-slate-800 dark:text-slate-300 select-none">
-                    <th className="w-[4%] py-3 px-2 text-center border-r border-slate-200 dark:border-slate-800">#</th>
-                    <th className="w-[26%] py-3 px-3 border-r border-slate-200 dark:border-slate-800">Item Description</th>
-                    <th className="w-[8%] py-3 px-2 text-right border-r border-slate-200 dark:border-slate-800">Ordered</th>
-                    <th className="w-[10%] py-3 px-2 text-center border-r border-slate-200 dark:border-slate-800">Warehouse Stock</th>
-                    <th className="w-[11%] py-3 px-2 text-center border-r border-slate-200 dark:border-slate-800">Dispatch Qty</th>
-                    <th className="w-[11%] py-3 px-2 text-center border-r border-slate-200 dark:border-slate-800">Stock After Dispatch</th>
-                    <th className="w-[9%] py-3 px-2 text-center border-r border-slate-200 dark:border-slate-800">Qty / Box</th>
-                    <th className="w-[9%] py-3 px-2 text-center border-r border-slate-200 dark:border-slate-800">Box Wt (Kg)</th>
-                    <th className="w-[12%] py-3 px-2 text-center">Cartons Assigned</th>
+                    <th className="w-[3%] py-2.5 px-1 text-center border-r border-slate-200 dark:border-slate-800">#</th>
+                    <th className="w-[27%] py-2.5 px-2 border-r border-slate-200 dark:border-slate-800">Item Description</th>
+                    <th className="w-[6%] py-2.5 px-1 text-right border-r border-slate-200 dark:border-slate-800">Ord</th>
+                    <th className="w-[9%] py-2.5 px-1 text-center border-r border-slate-200 dark:border-slate-800">Wh Stock</th>
+                    <th className="w-[9%] py-2.5 px-1 text-center border-r border-slate-200 dark:border-slate-800">Dispatch</th>
+                    <th className="w-[8%] py-2.5 px-1 text-center border-r border-slate-200 dark:border-slate-800">Stock After</th>
+                    <th className="w-[8%] py-2.5 px-1 text-center border-r border-slate-200 dark:border-slate-800">Qty/Box</th>
+                    <th className="w-[8%] py-2.5 px-1 text-center border-r border-slate-200 dark:border-slate-800">Box Wt</th>
+                    <th className="w-[18%] py-2.5 px-1 text-center border-r border-slate-200 dark:border-slate-800">Boxes Allotted</th>
+                    <th className="w-[4%] py-2.5 px-1 text-center">Del</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-200 dark:divide-slate-800 font-sans text-xs sm:text-sm">
+                <tbody className="divide-y divide-slate-200 dark:divide-slate-800 font-sans text-xs">
                   {soData.items.map((item, idx) => {
                     const boxBadge = getItemBoxBadge(item);
                     const isPromo = item.isPromoOrNonStock;
@@ -1324,18 +1420,18 @@ export const SalesDispatchView: React.FC = () => {
                         }`}
                       >
                         {/* Col 1: Serial # */}
-                        <td className="py-2.5 px-2 text-center font-bold text-slate-500 font-mono border-r border-slate-200 dark:border-slate-800 text-xs">
+                        <td className="py-2 px-1 text-center font-bold text-slate-500 font-mono border-r border-slate-200 dark:border-slate-800 text-xs">
                           {idx + 1}
                         </td>
 
                         {/* Col 2: Item Description */}
-                        <td className="py-2.5 px-3 border-r border-slate-200 dark:border-slate-800 min-w-0">
-                          <div className="font-extrabold text-slate-900 dark:text-white whitespace-normal break-words leading-snug">
+                        <td className="py-2 px-2 border-r border-slate-200 dark:border-slate-800 min-w-0">
+                          <div className="font-extrabold text-slate-900 dark:text-white line-clamp-2 leading-tight text-xs">
                             {item.cleanItemName}
                           </div>
-                          <div className="flex flex-wrap items-center gap-1.5 mt-1 font-mono text-[10px]">
+                          <div className="flex flex-wrap items-center gap-1 mt-0.5 font-mono text-[9px]">
                             {item.matchedSku?.division ? (
-                              <span className={`px-1.5 py-0.2 rounded font-bold uppercase ${
+                              <span className={`px-1 py-0.2 rounded font-bold uppercase ${
                                 item.matchedSku.division === 'DIM'
                                   ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300'
                                   : item.matchedSku.division === 'DIN'
@@ -1347,8 +1443,8 @@ export const SalesDispatchView: React.FC = () => {
                             ) : null}
 
                             {isPromo ? (
-                              <span className="rounded bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300 font-bold px-1.5 py-0.2">
-                                Promo Item
+                              <span className="rounded bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300 font-bold px-1 py-0.2">
+                                Promo
                               </span>
                             ) : null}
 
@@ -1360,28 +1456,28 @@ export const SalesDispatchView: React.FC = () => {
                               <button
                                 type="button"
                                 onClick={() => setSkuMappingModal({ item })}
-                                className="flex items-center gap-1 rounded bg-amber-100 text-amber-800 px-1.5 py-0.5 text-[10px] font-bold hover:bg-amber-200 transition"
+                                className="flex items-center gap-0.5 rounded bg-amber-100 text-amber-800 px-1 py-0.2 text-[9px] font-bold hover:bg-amber-200 transition"
                               >
-                                <Link2 className="h-3 w-3" />
-                                <span>Link Inventory SKU</span>
+                                <Link2 className="h-2.5 w-2.5" />
+                                <span>Link SKU</span>
                               </button>
                             )}
                           </div>
                         </td>
 
                         {/* Col 3: Order Qty */}
-                        <td className="py-2.5 px-2 text-right font-black font-mono text-slate-900 dark:text-white border-r border-slate-200 dark:border-slate-800 tabular-nums">
+                        <td className="py-2 px-1 text-right font-black font-mono text-slate-900 dark:text-white border-r border-slate-200 dark:border-slate-800 tabular-nums text-xs">
                           {Math.round(item.orderedQty).toLocaleString()}
                         </td>
 
                         {/* Col 4: Warehouse Stock (Current in Godown) */}
-                        <td className="py-2.5 px-2 text-center border-r border-slate-200 dark:border-slate-800">
+                        <td className="py-2 px-1 text-center border-r border-slate-200 dark:border-slate-800">
                           {isPromo ? (
-                            <span className="text-slate-400 font-mono text-xs">—</span>
+                            <span className="text-slate-400 font-mono text-[10px]">—</span>
                           ) : (
-                            <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                            <div className="flex items-center justify-center gap-1 flex-wrap">
                               {item.matchedSku ? (
-                                <span className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-xs font-bold font-mono ${
+                                <span className={`inline-flex items-center rounded px-1 py-0.5 text-[10px] font-bold font-mono ${
                                   currentStock >= curDispatchQty 
                                     ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' 
                                     : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
@@ -1389,12 +1485,12 @@ export const SalesDispatchView: React.FC = () => {
                                   {currentStock.toLocaleString()}
                                 </span>
                               ) : (
-                                <span className="text-slate-400 text-xs font-mono">0</span>
+                                <span className="text-slate-400 text-[10px] font-mono">0</span>
                               )}
                               <button
                                 type="button"
                                 onClick={() => handleOpenQuickIn(item)}
-                                className="rounded bg-emerald-600 hover:bg-emerald-700 text-white px-1.5 py-0.5 text-[10px] font-black transition active:scale-95"
+                                className="rounded bg-emerald-600 hover:bg-emerald-700 text-white px-1 py-0.2 text-[9px] font-black transition active:scale-95"
                                 title="Add stock to warehouse"
                               >
                                 +IN
@@ -1404,8 +1500,8 @@ export const SalesDispatchView: React.FC = () => {
                         </td>
 
                         {/* Col 5: Dispatch Qty (Partial Shipment Support) */}
-                        <td className="py-2.5 px-2 text-center border-r border-slate-200 dark:border-slate-800">
-                          <div className="flex flex-col items-center gap-1">
+                        <td className="py-2 px-1 text-center border-r border-slate-200 dark:border-slate-800">
+                          <div className="flex flex-col items-center gap-0.5">
                             <input
                               type="text"
                               value={curDispatchQtyStr}
@@ -1427,20 +1523,20 @@ export const SalesDispatchView: React.FC = () => {
                                   return next;
                                 });
                               }}
-                              className="w-20 rounded-lg border border-slate-300 bg-white px-2 py-1 text-center font-mono text-xs sm:text-sm font-bold text-slate-900 focus:border-orange-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                              className="w-14 sm:w-16 rounded border border-slate-300 bg-white px-1 py-0.5 text-center font-mono text-xs font-bold text-slate-900 focus:border-orange-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                             />
                             {isPartial && (
-                              <span className="rounded bg-amber-100 text-amber-800 text-[10px] font-black px-1.5 py-0.2">
-                                Partial ({curDispatchQty}/{Math.round(item.orderedQty)})
+                              <span className="rounded bg-amber-100 text-amber-800 text-[9px] font-bold px-1 py-0.2 leading-none">
+                                {curDispatchQty}/{Math.round(item.orderedQty)}
                               </span>
                             )}
                           </div>
                         </td>
 
                         {/* Col 6: Stock After Dispatch (Allows Negative Stock) */}
-                        <td className="py-2.5 px-2 text-center border-r border-slate-200 dark:border-slate-800">
+                        <td className="py-2 px-1 text-center border-r border-slate-200 dark:border-slate-800">
                           {isPromo ? (
-                            <span className="text-slate-400 font-mono text-xs">—</span>
+                            <span className="text-slate-400 font-mono text-[10px]">—</span>
                           ) : (
                             <div className="flex flex-col items-center">
                               <span className={`font-mono text-xs font-black ${
@@ -1451,8 +1547,8 @@ export const SalesDispatchView: React.FC = () => {
                                 {projectedStock > 0 ? `+${projectedStock}` : projectedStock}
                               </span>
                               {willGoNegative && (
-                                <span className="rounded bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 text-[9px] font-bold px-1.5 py-0.2 mt-0.5">
-                                  Minus Stock (-ve)
+                                <span className="rounded bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 text-[8px] font-bold px-1 py-0.2 mt-0.5 leading-none">
+                                  Minus (-ve)
                                 </span>
                               )}
                             </div>
@@ -1460,7 +1556,7 @@ export const SalesDispatchView: React.FC = () => {
                         </td>
 
                         {/* Col 7: Qty / Box */}
-                        <td className="py-2.5 px-2 text-center border-r border-slate-200 dark:border-slate-800">
+                        <td className="py-2 px-1 text-center border-r border-slate-200 dark:border-slate-800">
                           <input
                             type="text"
                             value={curUnitsPerBoxStr}
@@ -1482,12 +1578,12 @@ export const SalesDispatchView: React.FC = () => {
                                 return next;
                               });
                             }}
-                            className="w-16 rounded-lg border border-slate-300 bg-white px-2 py-1 text-center font-mono text-xs font-bold text-slate-900 focus:border-orange-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                            className="w-12 sm:w-14 rounded border border-slate-300 bg-white px-1 py-0.5 text-center font-mono text-xs font-bold text-slate-900 focus:border-orange-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white mx-auto block"
                           />
                         </td>
 
                         {/* Col 8: Box Wt (Kg) */}
-                        <td className="py-2.5 px-2 text-center border-r border-slate-200 dark:border-slate-800">
+                        <td className="py-2 px-1 text-center border-r border-slate-200 dark:border-slate-800">
                           <input
                             type="text"
                             value={curGrossWeightStr}
@@ -1509,29 +1605,46 @@ export const SalesDispatchView: React.FC = () => {
                                 return next;
                               });
                             }}
-                            className="w-18 rounded-lg border border-slate-300 bg-white px-2 py-1 text-center font-mono text-xs font-bold text-slate-900 focus:border-orange-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                            className="w-14 sm:w-16 rounded border border-slate-300 bg-white px-1 py-0.5 text-center font-mono text-xs font-bold text-slate-900 focus:border-orange-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white mx-auto block"
                           />
                         </td>
 
                         {/* Col 9: Cartons Assigned & Setup Trigger */}
-                        <td className="py-2.5 px-2 text-center min-w-0">
-                          <div className="flex flex-col items-center gap-1.5">
-                            <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-bold font-mono whitespace-nowrap ${
-                              boxBadge.isShared
+                        <td className="py-2 px-1 text-center border-r border-slate-200 dark:border-slate-800 min-w-0">
+                          <div className="flex flex-col items-center justify-center gap-0.5">
+                            <span className={`inline-flex items-center px-1.5 py-0.5 rounded-md text-[11px] font-black font-mono whitespace-nowrap shadow-2xs ${
+                              boxBadge.isPromo
+                                ? 'bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300'
+                                : boxBadge.isShared
                                 ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
                                 : 'bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300'
                             }`}>
                               {boxBadge.text}
                             </span>
+                            <span className="text-[10px] text-slate-500 font-bold whitespace-nowrap leading-none">
+                              {boxBadge.subText}
+                            </span>
                             <button
                               type="button"
                               onClick={() => handleSelectBuilderItemAndScroll(item.slNo)}
-                              className="text-[10px] font-bold text-orange-600 hover:text-orange-700 hover:underline flex items-center gap-1"
+                              className="text-[10px] font-bold text-orange-600 hover:text-orange-700 hover:underline flex items-center gap-0.5 mt-0.5"
                             >
-                              <SlidersHorizontal className="h-3 w-3" />
-                              <span>Box Setup</span>
+                              <SlidersHorizontal className="h-2.5 w-2.5" />
+                              <span>Setup</span>
                             </button>
                           </div>
+                        </td>
+
+                        {/* Col 10: Delete Item Action */}
+                        <td className="py-2 px-1 text-center">
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteItem(item.slNo)}
+                            className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition active:scale-95"
+                            title="Delete item from dispatch order"
+                          >
+                            <Trash2 className="h-3.5 w-3.5 mx-auto" />
+                          </button>
                         </td>
                       </tr>
                     );
@@ -1663,19 +1776,51 @@ export const SalesDispatchView: React.FC = () => {
                     </div>
                   </div>
 
+                  {/* Quick Action bar for Packing List & Labels */}
+                  <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-800 no-print text-xs">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-slate-700 dark:text-slate-300">
+                        Box Numbers:
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleAutoRenumberCartons}
+                        className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1 font-bold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 transition shadow-2xs"
+                        title="Renumber cartons 1, 2, 3... sequentially"
+                      >
+                        <Hash className="h-3 w-3 text-slate-500" />
+                        <span>Auto-Sequence (1 to {activeSummary.totalBoxes})</span>
+                      </button>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setOutputTab('box-labels')}
+                        className="flex items-center gap-1.5 rounded-lg border border-orange-300 bg-orange-100/70 hover:bg-orange-100 text-orange-900 px-3 py-1 font-black dark:border-orange-800 dark:bg-orange-950/60 dark:text-orange-200 transition shadow-2xs"
+                        title="View or print Box Stickers for all cartons"
+                      >
+                        <Tag className="h-3.5 w-3.5 text-orange-600" />
+                        <span>View / Print Labels ({activeSummary.totalBoxes} Boxes)</span>
+                      </button>
+                    </div>
+                  </div>
+
                   {/* Table with directly typeable cells */}
-                  <div className="w-full overflow-x-auto">
-                    <table className="w-full min-w-[700px] border-collapse text-left border border-slate-300 dark:border-slate-700">
+                  <div className="w-full">
+                    <table className="w-full table-fixed border-collapse text-left border border-slate-300 dark:border-slate-700 text-xs">
                       <thead>
                         <tr className="border-b-2 border-slate-300 bg-slate-100 text-xs sm:text-sm font-extrabold text-slate-800 uppercase dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
-                          <th className="w-[14%] py-2.5 px-3 text-center border-r border-slate-300 dark:border-slate-700">Carton No.</th>
-                          <th className="w-[50%] py-2.5 px-3 border-r border-slate-300 dark:border-slate-700">Item Name</th>
-                          <th className="w-[14%] py-2.5 px-3 text-right border-r border-slate-300 dark:border-slate-700">Qty</th>
-                          <th className="w-[14%] py-2.5 px-3 text-right border-r border-slate-300 dark:border-slate-700">Gross Wt. (Kg)</th>
-                          <th className="w-[8%] py-2.5 px-2 text-center no-print">Action</th>
+                          <th className="w-[15%] py-2.5 px-2 text-center border-r border-slate-300 dark:border-slate-700">
+                            Carton No. ✎
+                          </th>
+                          <th className="w-[47%] py-2.5 px-3 border-r border-slate-300 dark:border-slate-700">Item Name</th>
+                          <th className="w-[14%] py-2.5 px-2 text-right border-r border-slate-300 dark:border-slate-700">Qty</th>
+                          <th className="w-[16%] py-2.5 px-2 text-right border-r border-slate-300 dark:border-slate-700">Gross Wt. (Kg)</th>
+                          <th className="w-[8%] py-2.5 px-1 text-center no-print">Action</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-200 dark:divide-slate-700 font-mono text-xs sm:text-sm">
+                      <tbody className="divide-y divide-slate-200 dark:divide-slate-700 font-mono text-xs">
                         {activeSummary.cartons.map((carton, cartonIdx) => {
                           const isPromoBox = carton.items.some(it => it.isPromoOrNonStock);
 
@@ -1690,17 +1835,25 @@ export const SalesDispatchView: React.FC = () => {
                                 }`}
                               >
                                 {/* Carton No (Editable on first row of carton) */}
-                                <td className="py-1.5 px-2 text-center font-bold text-slate-900 dark:text-white border-r border-slate-200 dark:border-slate-700">
+                                <td className="py-2 px-2 text-center font-bold text-slate-900 dark:text-white border-r border-slate-200 dark:border-slate-700">
                                   {isFirstItemOfCarton ? (
-                                    <input
-                                      type="number"
-                                      min={1}
-                                      value={carton.cartonNo}
-                                      onChange={(e) => handleUpdateCartonField(cartonIdx, 'cartonNo', e.target.value)}
-                                      className="w-16 rounded border border-transparent hover:border-slate-300 focus:border-orange-500 bg-transparent px-1 py-0.5 text-center font-bold text-slate-900 dark:text-white focus:outline-none"
-                                    />
+                                    <div className="flex items-center justify-center">
+                                      <input
+                                        type="number"
+                                        min={1}
+                                        value={carton.cartonNo || ''}
+                                        onChange={(e) => handleUpdateCartonField(cartonIdx, 'cartonNo', e.target.value)}
+                                        onBlur={() => {
+                                          if (!carton.cartonNo || carton.cartonNo <= 0) {
+                                            handleUpdateCartonField(cartonIdx, 'cartonNo', cartonIdx + 1);
+                                          }
+                                        }}
+                                        className="w-16 sm:w-20 rounded-lg border border-slate-300 bg-white dark:bg-slate-800 dark:border-slate-600 px-2 py-1 text-center font-mono font-black text-orange-600 dark:text-orange-400 text-xs sm:text-sm focus:border-orange-500 focus:ring-1 focus:ring-orange-500 shadow-2xs"
+                                        title="Click to edit carton number"
+                                      />
+                                    </div>
                                   ) : (
-                                    <span className="text-slate-300 dark:text-slate-600">↳</span>
+                                    <span className="text-slate-300 dark:text-slate-600 font-mono">↳</span>
                                   )}
                                 </td>
 

@@ -146,6 +146,7 @@ export interface SalesOrderData {
 
 export interface CartonItem {
   id?: string;
+  sourceItemSlNo?: number; // Links back directly to SalesOrderItem.slNo
   slNo: number; // 1, 2, 3 inside carton
   rawName: string;
   cleanName: string; // Uppercase

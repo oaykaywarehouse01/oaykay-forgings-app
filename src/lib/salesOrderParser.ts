@@ -454,6 +454,7 @@ export const generateCartonsAndPackagingList = (soData: SalesOrderData): Packing
         const existingCarton = cartons[existingCartonIndex];
         existingCarton.items.push({
           id: `item-${boxNum}-${item.slNo}-${remainingQty}`,
+          sourceItemSlNo: item.slNo,
           slNo: existingCarton.items.length + 1,
           rawName: item.rawItemName,
           cleanName: item.cleanItemName,
@@ -474,6 +475,7 @@ export const generateCartonsAndPackagingList = (soData: SalesOrderData): Packing
           partyName: soData.partyName,
           items: [{
             id: `item-${boxNum}-${item.slNo}`,
+            sourceItemSlNo: item.slNo,
             slNo: 1,
             rawName: item.rawItemName,
             cleanName: item.cleanItemName,
@@ -521,6 +523,7 @@ export const generateCartonsAndPackagingList = (soData: SalesOrderData): Packing
       const itemQty = typeof gi.dispatchQty === 'number' ? Math.round(gi.dispatchQty) : Math.round(gi.orderedQty);
       return {
         id: `item-${assignedNo}-${gi.slNo}`,
+        sourceItemSlNo: gi.slNo,
         slNo: idx + 1,
         rawName: gi.rawItemName,
         cleanName: gi.cleanItemName,
@@ -562,6 +565,7 @@ export const generateCartonsAndPackagingList = (soData: SalesOrderData): Packing
         const itemQty = typeof pi.dispatchQty === 'number' ? Math.round(pi.dispatchQty) : Math.round(pi.orderedQty);
         return {
           id: `item-lastbox-${pi.slNo}`,
+          sourceItemSlNo: pi.slNo,
           slNo: idx + 1,
           rawName: pi.rawItemName,
           cleanName: pi.cleanItemName,
@@ -601,6 +605,7 @@ export const generateCartonsAndPackagingList = (soData: SalesOrderData): Packing
         partyName: soData.partyName,
         items: [{
           id: `item-${cNo}-${pi.slNo}`,
+          sourceItemSlNo: pi.slNo,
           slNo: 1,
           rawName: pi.rawItemName,
           cleanName: pi.cleanItemName,
