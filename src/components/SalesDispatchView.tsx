@@ -41,7 +41,8 @@ import {
   parseSalesOrderExcel, 
   generateCartonsAndPackagingList, 
   exportPackagingListToExcel, 
-  exportLabelsToExcel 
+  exportLabelsToExcel,
+  getSampleSalesOrder16
 } from '../lib/salesOrderParser';
 
 interface QuickInModalState {
@@ -101,6 +102,8 @@ export const SalesDispatchView: React.FC = () => {
   const [outputTab, setOutputTab] = useState<'packing-list' | 'box-labels'>('packing-list');
   const [labelViewMode, setLabelViewMode] = useState<'all-grid' | 'single-carousel'>('all-grid');
   const [currentCartonIndex, setCurrentCartonIndex] = useState<number>(0);
+  const [labelsPerPage, setLabelsPerPage] = useState<2 | 4>(4);
+  const [showBoxBuilder, setShowBoxBuilder] = useState<boolean>(false);
 
   // =========================================================================
   // INTERACTIVE MANUAL BOX BUILDER STATE (Dedicated Top Panel)
@@ -435,10 +438,13 @@ export const SalesDispatchView: React.FC = () => {
 
   const handleSelectBuilderItemAndScroll = (slNo: number) => {
     selectBuilderItem(slNo);
+    setShowBoxBuilder(true);
     setIsBuilderExpanded(true);
-    if (boxBuilderRef.current) {
-      boxBuilderRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
+    setTimeout(() => {
+      if (boxBuilderRef.current) {
+        boxBuilderRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }, 50);
   };
 
   // Sequential starting box calculation for the selected item in Box Builder
@@ -758,26 +764,68 @@ export const SalesDispatchView: React.FC = () => {
     setCustomCartons(list);
   };
 
-  // Group cartons into pages of exactly 2 labels per A4 page for printing
+  // Add a brand new empty carton to the packing list
+  const handleAddNewCarton = () => {
+    const list = getEditableCartonsClone();
+    const nextCartonNo = list.length > 0 ? Math.max(...list.map(c => c.cartonNo || 0)) + 1 : 1;
+    list.push({
+      id: `custom-carton-${Date.now()}`,
+      cartonNo: nextCartonNo,
+      shippingMark: soData?.shippingMark || 'OKF/DISPATCH',
+      piNumber: soData?.piNumber || '1',
+      partyName: soData?.partyName || 'Customer',
+      items: [{
+        id: `custom-item-${Date.now()}`,
+        slNo: 1,
+        rawName: 'CUSTOM PRODUCT / SIZE',
+        cleanName: 'CUSTOM PRODUCT / SIZE',
+        qty: 1,
+        weightKg: 10.00,
+        isPromoOrNonStock: false
+      }],
+      totalQty: 1,
+      grossWeightKg: 10.00,
+      isMixed: false
+    });
+    setCustomCartons(list);
+    setSuccessMessage(`Added new Carton #${nextCartonNo} to packing list.`);
+  };
+
+  // Delete an entire carton from the packing list
+  const handleDeleteCarton = (cartonIdx: number) => {
+    const list = getEditableCartonsClone();
+    if (!list[cartonIdx]) return;
+    const removedNo = list[cartonIdx].cartonNo;
+    list.splice(cartonIdx, 1);
+    setCustomCartons(list);
+    setSuccessMessage(`Deleted Carton #${removedNo}.`);
+  };
+
+  // Group cartons into pages (4 or 2 labels per A4 page) for printing
   const cartonPages = useMemo(() => {
     if (!activeSummary?.cartons) return [];
     const list = activeSummary.cartons;
+    const perPage = labelsPerPage;
     const pages: Array<{
       pageIndex: number;
       cartons: Array<{ carton: typeof activeSummary.cartons[0]; originalIndex: number }>;
     }> = [];
 
-    for (let i = 0; i < list.length; i += 2) {
+    for (let i = 0; i < list.length; i += perPage) {
       const pageCartons = [];
-      if (list[i]) pageCartons.push({ carton: list[i], originalIndex: i });
-      if (list[i + 1]) pageCartons.push({ carton: list[i + 1], originalIndex: i + 1 });
+      for (let j = 0; j < perPage; j++) {
+        const itemIdx = i + j;
+        if (list[itemIdx]) {
+          pageCartons.push({ carton: list[itemIdx], originalIndex: itemIdx });
+        }
+      }
       pages.push({
-        pageIndex: Math.floor(i / 2),
+        pageIndex: Math.floor(i / perPage),
         cartons: pageCartons,
       });
     }
     return pages;
-  }, [activeSummary?.cartons]);
+  }, [activeSummary?.cartons, labelsPerPage]);
 
   // Print handlers
   const handlePrintLabels = (all = true) => {
@@ -984,7 +1032,7 @@ export const SalesDispatchView: React.FC = () => {
               </span>
             </div>
 
-            <div className="mt-6 flex items-center justify-center gap-3">
+            <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
               <button
                 type="button"
                 onClick={(e) => {
@@ -995,6 +1043,22 @@ export const SalesDispatchView: React.FC = () => {
               >
                 <Upload className="h-4 w-4" />
                 <span>Select Sales Order Excel (.xlsx, .xls)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const sample16 = getSampleSalesOrder16(skus);
+                  setSoData(sample16);
+                  setCustomCartons(null);
+                  setRawInputMap({});
+                  setSuccessMessage('Loaded Sample SO #16 (Bhaliya Power Tools - 13 SKUs with IC & MC). Cartons & Packing List generated automatically!');
+                }}
+                className="flex items-center gap-2 rounded-xl border-2 border-orange-500 bg-orange-50 hover:bg-orange-100 text-orange-900 dark:bg-orange-950 dark:border-orange-600 dark:text-orange-200 px-5 py-2.5 text-xs font-black shadow-sm transition active:scale-95 cursor-pointer"
+              >
+                <Boxes className="h-4 w-4 text-orange-600" />
+                <span>Quick Test: Load SO #16 (13 SKUs with IC/MC)</span>
               </button>
             </div>
 
@@ -1161,6 +1225,20 @@ export const SalesDispatchView: React.FC = () => {
                   <span className="hidden sm:inline">Close</span>
                 </button>
 
+                <button
+                  type="button"
+                  onClick={() => setShowBoxBuilder(!showBoxBuilder)}
+                  className={`flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-bold transition shadow-2xs active:scale-95 ${
+                    showBoxBuilder
+                      ? 'border-orange-500 bg-orange-50 text-orange-800 dark:bg-orange-950 dark:border-orange-600 dark:text-orange-300 font-black'
+                      : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200'
+                  }`}
+                  title="Toggle manual box builder setup"
+                >
+                  <SlidersHorizontal className="h-3.5 w-3.5 text-orange-600" />
+                  <span>{showBoxBuilder ? 'Hide Box Setup' : 'Manual Box Setup'}</span>
+                </button>
+
                 <label className="flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 transition shadow-2xs cursor-pointer active:scale-95">
                   <Upload className="h-3.5 w-3.5 text-slate-500" />
                   <span>Upload New SO</span>
@@ -1177,12 +1255,13 @@ export const SalesDispatchView: React.FC = () => {
           </div>
 
           {/* --------------------------------------------------------------------- */}
-          {/* SECTION B: DEDICATED INTERACTIVE BOX BUILDER & PACKER                 */}
+          {/* SECTION B: DEDICATED INTERACTIVE BOX BUILDER & PACKER (OPTIONAL)      */}
           {/* --------------------------------------------------------------------- */}
-          <div 
-            ref={boxBuilderRef}
-            className="rounded-2xl border-2 border-orange-400/90 bg-gradient-to-br from-orange-50/90 via-white to-amber-50/60 p-4 sm:p-5 shadow-sm dark:border-orange-700 dark:from-slate-900 dark:via-slate-900 dark:to-orange-950/30 no-print"
-          >
+          {showBoxBuilder && (
+            <div 
+              ref={boxBuilderRef}
+              className="rounded-2xl border-2 border-orange-400/90 bg-gradient-to-br from-orange-50/90 via-white to-amber-50/60 p-4 sm:p-5 shadow-sm dark:border-orange-700 dark:from-slate-900 dark:via-slate-900 dark:to-orange-950/30 no-print"
+            >
             <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-orange-200 dark:border-orange-800/60 gap-2">
               <div className="flex items-center gap-2.5">
                 <div className="p-2 rounded-xl bg-orange-600 text-white shadow-2xs">
@@ -1380,6 +1459,7 @@ export const SalesDispatchView: React.FC = () => {
               </div>
             )}
           </div>
+        )}
 
           {/* --------------------------------------------------------------------- */}
           {/* SECTION C: ITEM PACKING & DISPATCH TABLE (WITH LIVE NEGATIVE STOCK)    */}
@@ -1787,10 +1867,10 @@ export const SalesDispatchView: React.FC = () => {
                       }
                     }}
                     className="flex items-center gap-1.5 rounded-xl bg-slate-900 text-white hover:bg-black dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white px-3.5 py-1.5 text-xs font-black shadow-xs transition active:scale-95 no-print cursor-pointer"
-                    title={outputTab === 'box-labels' ? "Print box stickers (2 per page)" : "Print packing list table"}
+                    title={outputTab === 'box-labels' ? `Print box stickers (${labelsPerPage} per page)` : "Print packing list table"}
                   >
                     <Printer className="h-3.5 w-3.5" />
-                    <span>{outputTab === 'box-labels' ? 'Print Labels (2/Page)' : 'Print Packing List'}</span>
+                    <span>{outputTab === 'box-labels' ? `Print Labels (${labelsPerPage}/Page)` : 'Print Packing List'}</span>
                   </button>
                 </div>
               </div>
@@ -1818,7 +1898,7 @@ export const SalesDispatchView: React.FC = () => {
 
                   {/* Quick Action bar for Packing List & Labels */}
                   <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-800 no-print text-xs">
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <span className="font-bold text-slate-700 dark:text-slate-300">
                         Box Numbers:
                       </span>
@@ -1830,6 +1910,16 @@ export const SalesDispatchView: React.FC = () => {
                       >
                         <Hash className="h-3 w-3 text-slate-500" />
                         <span>Auto-Sequence (1 to {activeSummary.totalBoxes})</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleAddNewCarton}
+                        className="flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1 font-bold text-emerald-800 hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 transition shadow-2xs"
+                        title="Add a new custom box to the packing list"
+                      >
+                        <Plus className="h-3 w-3 text-emerald-600" />
+                        <span>+ Add Box</span>
                       </button>
                     </div>
 
@@ -1899,12 +1989,19 @@ export const SalesDispatchView: React.FC = () => {
 
                                 {/* Item Name (Editable) */}
                                 <td className="py-1.5 px-3 font-bold text-slate-900 dark:text-white border-r border-slate-200 dark:border-slate-700 whitespace-normal break-words">
-                                  <input
-                                    type="text"
-                                    value={item.cleanName}
-                                    onChange={(e) => handleUpdateCartonItemField(cartonIdx, itemIdx, 'cleanName', e.target.value)}
-                                    className="w-full rounded border border-transparent hover:border-slate-300 focus:border-orange-500 bg-transparent px-1.5 py-0.5 font-bold text-slate-900 dark:text-white focus:outline-none uppercase"
-                                  />
+                                  <div className="flex items-center gap-1.5">
+                                    <input
+                                      type="text"
+                                      value={item.cleanName}
+                                      onChange={(e) => handleUpdateCartonItemField(cartonIdx, itemIdx, 'cleanName', e.target.value)}
+                                      className="w-full rounded border border-transparent hover:border-slate-300 focus:border-orange-500 bg-transparent px-1.5 py-0.5 font-bold text-slate-900 dark:text-white focus:outline-none uppercase"
+                                    />
+                                    {item.size && (
+                                      <span className="shrink-0 rounded bg-slate-100 text-slate-700 text-[10px] font-black px-1.5 py-0.5 dark:bg-slate-800 dark:text-slate-300 font-mono">
+                                        {item.size}
+                                      </span>
+                                    )}
+                                  </div>
                                 </td>
 
                                 {/* Qty (Editable) */}
@@ -1938,23 +2035,35 @@ export const SalesDispatchView: React.FC = () => {
                                 <td className="py-1.5 px-2 text-center no-print">
                                   <div className="flex items-center justify-center gap-1">
                                     {isFirstItemOfCarton && (
+                                      <>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleAddItemToCarton(cartonIdx)}
+                                          className="p-1 text-slate-400 hover:text-emerald-600 transition"
+                                          title="Add another item into this box"
+                                        >
+                                          <Plus className="h-3.5 w-3.5" />
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleDeleteCarton(cartonIdx)}
+                                          className="p-1 text-slate-400 hover:text-rose-600 transition"
+                                          title="Delete this entire box"
+                                        >
+                                          <Trash2 className="h-3.5 w-3.5 text-rose-500" />
+                                        </button>
+                                      </>
+                                    )}
+                                    {!isFirstItemOfCarton && (
                                       <button
                                         type="button"
-                                        onClick={() => handleAddItemToCarton(cartonIdx)}
-                                        className="p-1 text-slate-400 hover:text-emerald-600 transition"
-                                        title="Add another item into this box"
+                                        onClick={() => handleDeleteItemFromCarton(cartonIdx, itemIdx)}
+                                        className="p-1 text-slate-400 hover:text-rose-600 transition"
+                                        title="Remove item from carton"
                                       >
-                                        <Plus className="h-3.5 w-3.5" />
+                                        <Trash2 className="h-3.5 w-3.5" />
                                       </button>
                                     )}
-                                    <button
-                                      type="button"
-                                      onClick={() => handleDeleteItemFromCarton(cartonIdx, itemIdx)}
-                                      className="p-1 text-slate-400 hover:text-rose-600 transition"
-                                      title="Remove item from carton"
-                                    >
-                                      <Trash2 className="h-3.5 w-3.5" />
-                                    </button>
                                   </div>
                                 </td>
                               </tr>
@@ -1997,7 +2106,7 @@ export const SalesDispatchView: React.FC = () => {
               {/* VIEW 2: BOX LABELS / STICKERS */}
               {outputTab === 'box-labels' && (
                 <div className="space-y-4 print:space-y-0">
-                  {/* Dedicated A4 Print Banner with 2-labels-per-page guidance & button */}
+                  {/* Dedicated A4 Print Banner with 4-labels-per-page guidance & button */}
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 bg-orange-50/80 dark:bg-orange-950/40 rounded-2xl border border-orange-200 dark:border-orange-900/60 no-print">
                     <div className="flex items-center gap-2.5">
                       <div className="p-2 rounded-xl bg-orange-600 text-white shadow-2xs">
@@ -2007,16 +2116,44 @@ export const SalesDispatchView: React.FC = () => {
                         <div className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-2">
                           <span>A4 Box Labels Print Layout</span>
                           <span className="rounded-md bg-orange-200 text-orange-900 dark:bg-orange-900 dark:text-orange-200 px-2 py-0.5 text-[10px] font-bold">
-                            2 Labels Per Page
+                            {labelsPerPage} Labels Per Page
                           </span>
                         </div>
                         <div className="text-[11px] text-slate-600 dark:text-slate-400">
-                          {activeSummary.totalBoxes} Labels • Formatted for standard A4 paper ({Math.ceil(activeSummary.totalBoxes / 2)} Pages)
+                          {activeSummary.totalBoxes} Labels • Formatted for standard A4 paper ({Math.ceil(activeSummary.totalBoxes / labelsPerPage)} Pages)
                         </div>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {/* Density Selector: 4 per page vs 2 per page */}
+                      <div className="flex items-center rounded-xl border border-orange-300 bg-white dark:bg-slate-900 dark:border-orange-800 p-0.5 text-xs font-bold shadow-2xs">
+                        <button
+                          type="button"
+                          onClick={() => setLabelsPerPage(4)}
+                          className={`px-2.5 py-1 rounded-lg transition ${
+                            labelsPerPage === 4
+                              ? 'bg-orange-600 text-white shadow-2xs font-black'
+                              : 'text-slate-700 dark:text-slate-300 hover:text-orange-600'
+                          }`}
+                          title="Print 4 stickers per A4 page (2x2 Grid)"
+                        >
+                          4 / Page (A4 2×2)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setLabelsPerPage(2)}
+                          className={`px-2.5 py-1 rounded-lg transition ${
+                            labelsPerPage === 2
+                              ? 'bg-orange-600 text-white shadow-2xs font-black'
+                              : 'text-slate-700 dark:text-slate-300 hover:text-orange-600'
+                          }`}
+                          title="Print 2 stickers per A4 page (Vertical)"
+                        >
+                          2 / Page
+                        </button>
+                      </div>
+
                       {labelViewMode === 'single-carousel' && (
                         <button
                           type="button"
@@ -2033,10 +2170,10 @@ export const SalesDispatchView: React.FC = () => {
                         type="button"
                         onClick={() => handlePrintLabels(true)}
                         className="flex items-center gap-1.5 rounded-xl bg-orange-600 hover:bg-orange-700 text-white px-3.5 py-1.5 text-xs font-black shadow-xs transition active:scale-95 cursor-pointer"
-                        title="Print all carton stickers formatted 2 per A4 sheet"
+                        title={`Print all carton stickers formatted ${labelsPerPage} per A4 sheet`}
                       >
                         <Printer className="h-3.5 w-3.5" />
-                        <span>Print All Labels (2 Per Page)</span>
+                        <span>Print All Labels ({labelsPerPage} Per Page)</span>
                       </button>
                     </div>
                   </div>
@@ -2093,53 +2230,59 @@ export const SalesDispatchView: React.FC = () => {
                     )}
                   </div>
 
-                  {/* Stickers Output: In print, organized into 2 labels per page */}
+                  {/* Stickers Output: In print, organized into 4 (or 2) labels per page */}
                   {labelViewMode === 'all-grid' ? (
                     <div className="space-y-4 print:space-y-0">
                       {cartonPages.map((pageGroup) => (
                         <div
                           key={`label-page-${pageGroup.pageIndex}`}
-                          className="grid grid-cols-1 md:grid-cols-2 gap-4 print:print-page-2labels print:grid-cols-1 print:gap-2"
+                          className={`grid grid-cols-1 md:grid-cols-2 gap-4 ${
+                            labelsPerPage === 4
+                              ? 'print:print-page-4labels print:grid-cols-2 print:gap-2'
+                              : 'print:print-page-2labels print:grid-cols-1 print:gap-2'
+                          }`}
                         >
                           {pageGroup.cartons.map(({ carton, originalIndex }) => {
                             const isPromoBox = carton.items.some(it => it.isPromoOrNonStock);
                             return (
                               <div
                                 key={carton.id || `carton-label-${carton.cartonNo}`}
-                                className={`shipping-carton-label rounded-2xl border-2 sm:border-3 bg-white p-3.5 sm:p-4 shadow-sm dark:bg-slate-900 font-sans relative ${
-                                  isPromoBox ? 'border-purple-600 dark:border-purple-400' : 'border-slate-900 dark:border-slate-200'
+                                className={`${
+                                  labelsPerPage === 4 ? 'shipping-carton-label-4up' : 'shipping-carton-label'
+                                } rounded-xl border-2 sm:border-3 bg-white p-3 sm:p-3.5 shadow-sm dark:bg-slate-900 font-sans relative ${
+                                  isPromoBox ? 'border-purple-600 dark:border-purple-400' : 'border-slate-900 dark:border-slate-200 print:border-black'
                                 }`}
                               >
                                 {/* Header Block: Carton# | Shipping Mark | PI# */}
-                                <div className="grid grid-cols-3 border-b-2 border-slate-900 pb-2 dark:border-slate-200 font-mono">
+                                <div className="grid grid-cols-3 border-b-2 border-slate-900 pb-2 dark:border-slate-200 font-mono print:border-black">
                                   <div>
-                                    <div className="text-[10px] font-bold text-slate-500 uppercase">Carton#</div>
+                                    <div className="text-[10px] font-black text-slate-700 dark:text-slate-300 uppercase print:text-black">Carton#</div>
                                     <input
                                       type="number"
                                       min={1}
                                       value={carton.cartonNo}
                                       onChange={(e) => handleUpdateCartonField(originalIndex, 'cartonNo', e.target.value)}
-                                      className="text-lg sm:text-xl font-black text-slate-900 dark:text-white mt-0.5 w-20 bg-transparent border-b border-dashed border-slate-300 focus:outline-none print:border-none print:text-black"
+                                      className="text-xl sm:text-2xl print:text-2xl font-black text-slate-900 dark:text-white mt-0.5 w-24 bg-transparent border-b border-dashed border-slate-300 focus:outline-none print:border-none print:text-black font-mono"
                                     />
                                   </div>
 
                                   <div className="text-center">
-                                    <div className="text-[10px] font-bold text-slate-500 uppercase">Shipping Mark</div>
+                                    <div className="text-[10px] font-black text-slate-700 dark:text-slate-300 uppercase print:text-black">Shipping Mark</div>
                                     <input
                                       type="text"
                                       value={carton.shippingMark}
                                       onChange={(e) => handleUpdateCartonField(originalIndex, 'shippingMark', e.target.value)}
-                                      className="text-xs sm:text-sm font-black text-orange-700 dark:text-orange-400 mt-0.5 text-center w-full bg-transparent border-b border-dashed border-orange-300 focus:outline-none uppercase print:border-none print:text-black"
+                                      className="text-sm sm:text-base print:text-base font-black text-orange-700 dark:text-orange-400 mt-0.5 text-center w-full bg-transparent border-b border-dashed border-orange-300 focus:outline-none uppercase print:border-none print:text-black tracking-wide"
                                     />
                                   </div>
 
                                   <div className="text-right">
-                                    <div className="text-[10px] font-bold text-slate-500 uppercase">PI#</div>
+                                    <div className="text-[10px] font-black text-slate-700 dark:text-slate-300 uppercase print:text-black">PI#</div>
                                     <input
                                       type="text"
                                       value={carton.piNumber}
                                       onChange={(e) => handleUpdateCartonField(originalIndex, 'piNumber', e.target.value)}
-                                      className="text-lg sm:text-xl font-black text-slate-900 dark:text-white mt-0.5 text-right w-20 bg-transparent border-b border-dashed border-slate-300 focus:outline-none ml-auto block print:border-none print:text-black"
+                                      className="text-xl sm:text-2xl print:text-2xl font-black text-slate-900 dark:text-white mt-0.5 text-right w-24 bg-transparent border-b border-dashed border-slate-300 focus:outline-none ml-auto block print:border-none print:text-black font-mono"
                                     />
                                   </div>
                                 </div>
@@ -2148,37 +2291,44 @@ export const SalesDispatchView: React.FC = () => {
                                 <div className="mt-2 flex-1">
                                   <table className="w-full table-fixed border-collapse text-left font-mono">
                                     <thead>
-                                      <tr className="border-b border-slate-300 text-[10px] font-black text-slate-700 uppercase dark:border-slate-700 dark:text-slate-300 print:text-black">
-                                        <th className="w-[10%] py-1.5 px-1 text-center">S#</th>
-                                        <th className="w-[50%] py-1.5 px-2">Product/Size</th>
-                                        <th className="w-[20%] py-1.5 px-1 text-right">Quantity (Nos)</th>
-                                        <th className="w-[20%] py-1.5 px-2 text-right">Weight (Kg)</th>
+                                      <tr className="border-b-2 border-slate-900 text-[11px] font-black text-slate-900 uppercase dark:border-slate-300 dark:text-slate-100 print:text-black print:border-black">
+                                        <th className="w-[10%] py-1 px-1 text-center">S#</th>
+                                        <th className="w-[50%] py-1 px-2">Product/Size</th>
+                                        <th className="w-[20%] py-1 px-1 text-right">Quantity (Nos)</th>
+                                        <th className="w-[20%] py-1 px-2 text-right">Weight (Kg)</th>
                                       </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-200 dark:divide-slate-800 text-xs">
                                       {carton.items.map((item, idx) => (
                                         <tr key={idx}>
-                                          <td className="py-1 px-1 text-center font-bold text-slate-500 print:text-black">
+                                          <td className="py-1 px-1 text-center font-black text-slate-900 dark:text-slate-200 print:text-black text-xs sm:text-sm print:text-xs">
                                             {idx + 1}
                                           </td>
-                                          <td className="py-1 px-2 font-black text-slate-900 dark:text-white whitespace-normal break-words leading-tight print:text-black">
-                                            <input
-                                              type="text"
-                                              value={item.cleanName}
-                                              onChange={(e) => handleUpdateCartonItemField(originalIndex, idx, 'cleanName', e.target.value)}
-                                              className="w-full bg-transparent border-b border-transparent hover:border-slate-300 focus:border-orange-500 focus:outline-none uppercase font-black print:border-none print:text-black"
-                                            />
+                                          <td className="py-1 px-2 font-black text-slate-900 dark:text-white whitespace-normal break-words leading-tight print:text-black text-xs sm:text-sm print:text-xs">
+                                            <div className="flex items-center gap-1">
+                                              <input
+                                                type="text"
+                                                value={item.cleanName}
+                                                onChange={(e) => handleUpdateCartonItemField(originalIndex, idx, 'cleanName', e.target.value)}
+                                                className="w-full bg-transparent border-b border-transparent hover:border-slate-300 focus:border-orange-500 focus:outline-none uppercase font-black print:border-none print:text-black text-xs sm:text-sm print:text-xs"
+                                              />
+                                              {item.size && (
+                                                <span className="shrink-0 text-[10px] font-black bg-slate-100 print:bg-transparent px-1 rounded text-black">
+                                                  {item.size}
+                                                </span>
+                                              )}
+                                            </div>
                                           </td>
-                                          <td className="py-1 px-1 text-right font-black text-slate-900 dark:text-white tabular-nums print:text-black">
+                                          <td className="py-1 px-1 text-right font-black text-slate-900 dark:text-white tabular-nums print:text-black text-sm sm:text-base print:text-sm">
                                             <input
                                               type="number"
                                               min={0}
                                               value={item.qty}
                                               onChange={(e) => handleUpdateCartonItemField(originalIndex, idx, 'qty', e.target.value)}
-                                              className="w-16 text-right bg-transparent border-b border-transparent hover:border-slate-300 focus:border-orange-500 focus:outline-none font-black tabular-nums ml-auto block print:border-none print:text-black"
+                                              className="w-16 text-right bg-transparent border-b border-transparent hover:border-slate-300 focus:border-orange-500 focus:outline-none font-black tabular-nums ml-auto block print:border-none print:text-black text-sm sm:text-base print:text-sm"
                                             />
                                           </td>
-                                          <td className="py-1 px-2 text-right font-bold text-slate-900 dark:text-white tabular-nums print:text-black">
+                                          <td className="py-1 px-2 text-right font-bold text-slate-900 dark:text-white tabular-nums print:text-black text-xs sm:text-sm print:text-xs">
                                             <input
                                               type="number"
                                               step={0.01}
@@ -2191,21 +2341,21 @@ export const SalesDispatchView: React.FC = () => {
                                                   handleUpdateCartonItemField(originalIndex, idx, 'weightKg', e.target.value);
                                                 }
                                               }}
-                                              className="w-18 text-right bg-transparent border-b border-transparent hover:border-slate-300 focus:border-orange-500 focus:outline-none font-bold tabular-nums ml-auto block print:border-none print:text-black"
+                                              className="w-18 text-right bg-transparent border-b border-transparent hover:border-slate-300 focus:border-orange-500 focus:outline-none font-bold tabular-nums ml-auto block print:border-none print:text-black text-xs sm:text-sm print:text-xs"
                                             />
                                           </td>
                                         </tr>
                                       ))}
 
                                       {/* Total Row */}
-                                      <tr className="border-t-2 border-slate-900 font-black text-slate-900 dark:border-slate-200 dark:text-white text-xs print:text-black">
-                                        <td colSpan={2} className="py-1.5 px-2 uppercase text-[10px]">
+                                      <tr className="border-t-2 border-slate-900 font-black text-slate-900 dark:border-slate-200 dark:text-white text-xs sm:text-sm print:text-xs print:text-black print:border-black">
+                                        <td colSpan={2} className="py-1 px-2 uppercase text-[11px] print:text-[11px]">
                                           Total
                                         </td>
-                                        <td className="py-1.5 px-1 text-right tabular-nums">
+                                        <td className="py-1 px-1 text-right tabular-nums text-sm sm:text-base print:text-sm">
                                           {carton.totalQty}
                                         </td>
-                                        <td className="py-1.5 px-2 text-right tabular-nums">
+                                        <td className="py-1 px-2 text-right tabular-nums text-xs sm:text-sm print:text-xs">
                                           {carton.grossWeightKg.toFixed(2)}
                                         </td>
                                       </tr>
@@ -2214,9 +2364,11 @@ export const SalesDispatchView: React.FC = () => {
                                 </div>
 
                                 {/* Footer Branding Bar */}
-                                <div className="pt-2 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between text-[9px] font-mono text-slate-500 dark:text-slate-400 print:text-black">
+                                <div className="pt-1.5 border-t-2 border-slate-900 dark:border-slate-300 print:border-black flex items-center justify-between text-[10px] sm:text-xs print:text-[10px] font-mono font-black text-slate-700 dark:text-slate-300 print:text-black">
                                   <span>OAYKAY FORGINGS • INDUSTRIAL PACKAGING</span>
-                                  <span>BOX {carton.cartonNo} OF {activeSummary?.totalBoxes}</span>
+                                  <span className="font-mono bg-black text-white px-2 py-0.5 rounded print:border print:border-black print:bg-transparent print:text-black font-black">
+                                    BOX {carton.cartonNo} OF {activeSummary?.totalBoxes}
+                                  </span>
                                 </div>
                               </div>
                             );
@@ -2231,43 +2383,45 @@ export const SalesDispatchView: React.FC = () => {
                         const realCartonIdx = currentCartonIndex;
                         const isPromoBox = carton.items.some(it => it.isPromoOrNonStock);
                         return (
-                          <div className="print:print-page-2labels print:gap-0">
+                          <div className={labelsPerPage === 4 ? "print:print-page-4labels print:gap-2" : "print:print-page-2labels print:gap-0"}>
                             <div
                               key={carton.id || `carton-label-${carton.cartonNo}`}
-                              className={`shipping-carton-label rounded-2xl border-2 sm:border-3 bg-white p-3.5 sm:p-4 shadow-sm dark:bg-slate-900 font-sans relative ${
-                                isPromoBox ? 'border-purple-600 dark:border-purple-400' : 'border-slate-900 dark:border-slate-200'
+                              className={`${
+                                labelsPerPage === 4 ? 'shipping-carton-label-4up' : 'shipping-carton-label'
+                              } rounded-xl border-2 sm:border-3 bg-white p-3 sm:p-4 shadow-sm dark:bg-slate-900 font-sans relative ${
+                                isPromoBox ? 'border-purple-600 dark:border-purple-400' : 'border-slate-900 dark:border-slate-200 print:border-black'
                               }`}
                             >
                               {/* Header Block: Carton# | Shipping Mark | PI# */}
-                              <div className="grid grid-cols-3 border-b-2 border-slate-900 pb-2 dark:border-slate-200 font-mono">
+                              <div className="grid grid-cols-3 border-b-2 border-slate-900 pb-2 dark:border-slate-200 font-mono print:border-black">
                                 <div>
-                                  <div className="text-[10px] font-bold text-slate-500 uppercase">Carton#</div>
+                                  <div className="text-[10px] font-black text-slate-700 dark:text-slate-300 uppercase print:text-black">Carton#</div>
                                   <input
                                     type="number"
                                     min={1}
                                     value={carton.cartonNo}
                                     onChange={(e) => handleUpdateCartonField(realCartonIdx, 'cartonNo', e.target.value)}
-                                    className="text-lg sm:text-xl font-black text-slate-900 dark:text-white mt-0.5 w-20 bg-transparent border-b border-dashed border-slate-300 focus:outline-none print:border-none print:text-black"
+                                    className="text-xl sm:text-2xl print:text-2xl font-black text-slate-900 dark:text-white mt-0.5 w-24 bg-transparent border-b border-dashed border-slate-300 focus:outline-none print:border-none print:text-black font-mono"
                                   />
                                 </div>
 
                                 <div className="text-center">
-                                  <div className="text-[10px] font-bold text-slate-500 uppercase">Shipping Mark</div>
+                                  <div className="text-[10px] font-black text-slate-700 dark:text-slate-300 uppercase print:text-black">Shipping Mark</div>
                                   <input
                                     type="text"
                                     value={carton.shippingMark}
                                     onChange={(e) => handleUpdateCartonField(realCartonIdx, 'shippingMark', e.target.value)}
-                                    className="text-xs sm:text-sm font-black text-orange-700 dark:text-orange-400 mt-0.5 text-center w-full bg-transparent border-b border-dashed border-orange-300 focus:outline-none uppercase print:border-none print:text-black"
+                                    className="text-sm sm:text-base print:text-base font-black text-orange-700 dark:text-orange-400 mt-0.5 text-center w-full bg-transparent border-b border-dashed border-orange-300 focus:outline-none uppercase print:border-none print:text-black tracking-wide"
                                   />
                                 </div>
 
                                 <div className="text-right">
-                                  <div className="text-[10px] font-bold text-slate-500 uppercase">PI#</div>
+                                  <div className="text-[10px] font-black text-slate-700 dark:text-slate-300 uppercase print:text-black">PI#</div>
                                   <input
                                     type="text"
                                     value={carton.piNumber}
                                     onChange={(e) => handleUpdateCartonField(realCartonIdx, 'piNumber', e.target.value)}
-                                    className="text-lg sm:text-xl font-black text-slate-900 dark:text-white mt-0.5 text-right w-20 bg-transparent border-b border-dashed border-slate-300 focus:outline-none ml-auto block print:border-none print:text-black"
+                                    className="text-xl sm:text-2xl print:text-2xl font-black text-slate-900 dark:text-white mt-0.5 text-right w-24 bg-transparent border-b border-dashed border-slate-300 focus:outline-none ml-auto block print:border-none print:text-black font-mono"
                                   />
                                 </div>
                               </div>
@@ -2276,37 +2430,44 @@ export const SalesDispatchView: React.FC = () => {
                               <div className="mt-2 flex-1">
                                 <table className="w-full table-fixed border-collapse text-left font-mono">
                                   <thead>
-                                    <tr className="border-b border-slate-300 text-[10px] font-black text-slate-700 uppercase dark:border-slate-700 dark:text-slate-300 print:text-black">
-                                      <th className="w-[10%] py-1.5 px-1 text-center">S#</th>
-                                      <th className="w-[50%] py-1.5 px-2">Product/Size</th>
-                                      <th className="w-[20%] py-1.5 px-1 text-right">Quantity (Nos)</th>
-                                      <th className="w-[20%] py-1.5 px-2 text-right">Weight (Kg)</th>
+                                    <tr className="border-b-2 border-slate-900 text-[11px] font-black text-slate-900 uppercase dark:border-slate-300 dark:text-slate-100 print:text-black print:border-black">
+                                      <th className="w-[10%] py-1 px-1 text-center">S#</th>
+                                      <th className="w-[50%] py-1 px-2">Product/Size</th>
+                                      <th className="w-[20%] py-1 px-1 text-right">Quantity (Nos)</th>
+                                      <th className="w-[20%] py-1 px-2 text-right">Weight (Kg)</th>
                                     </tr>
                                   </thead>
                                   <tbody className="divide-y divide-slate-200 dark:divide-slate-800 text-xs">
                                     {carton.items.map((item, idx) => (
                                       <tr key={idx}>
-                                        <td className="py-1 px-1 text-center font-bold text-slate-500 print:text-black">
+                                        <td className="py-1 px-1 text-center font-black text-slate-900 dark:text-slate-200 print:text-black text-xs sm:text-sm print:text-xs">
                                           {idx + 1}
                                         </td>
-                                        <td className="py-1 px-2 font-black text-slate-900 dark:text-white whitespace-normal break-words leading-tight print:text-black">
-                                          <input
-                                            type="text"
-                                            value={item.cleanName}
-                                            onChange={(e) => handleUpdateCartonItemField(realCartonIdx, idx, 'cleanName', e.target.value)}
-                                            className="w-full bg-transparent border-b border-transparent hover:border-slate-300 focus:border-orange-500 focus:outline-none uppercase font-black print:border-none print:text-black"
-                                          />
+                                        <td className="py-1 px-2 font-black text-slate-900 dark:text-white whitespace-normal break-words leading-tight print:text-black text-xs sm:text-sm print:text-xs">
+                                          <div className="flex items-center gap-1">
+                                            <input
+                                              type="text"
+                                              value={item.cleanName}
+                                              onChange={(e) => handleUpdateCartonItemField(realCartonIdx, idx, 'cleanName', e.target.value)}
+                                              className="w-full bg-transparent border-b border-transparent hover:border-slate-300 focus:border-orange-500 focus:outline-none uppercase font-black print:border-none print:text-black text-xs sm:text-sm print:text-xs"
+                                            />
+                                            {item.size && (
+                                              <span className="shrink-0 text-[10px] font-black bg-slate-100 print:bg-transparent px-1 rounded text-black">
+                                                {item.size}
+                                              </span>
+                                            )}
+                                          </div>
                                         </td>
-                                        <td className="py-1 px-1 text-right font-black text-slate-900 dark:text-white tabular-nums print:text-black">
+                                        <td className="py-1 px-1 text-right font-black text-slate-900 dark:text-white tabular-nums print:text-black text-sm sm:text-base print:text-sm">
                                           <input
                                             type="number"
                                             min={0}
                                             value={item.qty}
                                             onChange={(e) => handleUpdateCartonItemField(realCartonIdx, idx, 'qty', e.target.value)}
-                                            className="w-16 text-right bg-transparent border-b border-transparent hover:border-slate-300 focus:border-orange-500 focus:outline-none font-black tabular-nums ml-auto block print:border-none print:text-black"
+                                            className="w-16 text-right bg-transparent border-b border-transparent hover:border-slate-300 focus:border-orange-500 focus:outline-none font-black tabular-nums ml-auto block print:border-none print:text-black text-sm sm:text-base print:text-sm"
                                           />
                                         </td>
-                                        <td className="py-1 px-2 text-right font-bold text-slate-900 dark:text-white tabular-nums print:text-black">
+                                        <td className="py-1 px-2 text-right font-bold text-slate-900 dark:text-white tabular-nums print:text-black text-xs sm:text-sm print:text-xs">
                                           <input
                                             type="number"
                                             step={0.01}
@@ -2319,21 +2480,21 @@ export const SalesDispatchView: React.FC = () => {
                                                 handleUpdateCartonItemField(realCartonIdx, idx, 'weightKg', e.target.value);
                                               }
                                             }}
-                                            className="w-18 text-right bg-transparent border-b border-transparent hover:border-slate-300 focus:border-orange-500 focus:outline-none font-bold tabular-nums ml-auto block print:border-none print:text-black"
+                                            className="w-18 text-right bg-transparent border-b border-transparent hover:border-slate-300 focus:border-orange-500 focus:outline-none font-bold tabular-nums ml-auto block print:border-none print:text-black text-xs sm:text-sm print:text-xs"
                                           />
                                         </td>
                                       </tr>
                                     ))}
 
                                     {/* Total Row */}
-                                    <tr className="border-t-2 border-slate-900 font-black text-slate-900 dark:border-slate-200 dark:text-white text-xs print:text-black">
-                                      <td colSpan={2} className="py-1.5 px-2 uppercase text-[10px]">
+                                    <tr className="border-t-2 border-slate-900 font-black text-slate-900 dark:border-slate-200 dark:text-white text-xs sm:text-sm print:text-xs print:text-black print:border-black">
+                                      <td colSpan={2} className="py-1 px-2 uppercase text-[11px] print:text-[11px]">
                                         Total
                                       </td>
-                                      <td className="py-1.5 px-1 text-right tabular-nums">
+                                      <td className="py-1 px-1 text-right tabular-nums text-sm sm:text-base print:text-sm">
                                         {carton.totalQty}
                                       </td>
-                                      <td className="py-1.5 px-2 text-right tabular-nums">
+                                      <td className="py-1 px-2 text-right tabular-nums text-xs sm:text-sm print:text-xs">
                                         {carton.grossWeightKg.toFixed(2)}
                                       </td>
                                     </tr>
@@ -2342,9 +2503,11 @@ export const SalesDispatchView: React.FC = () => {
                               </div>
 
                               {/* Footer Branding Bar */}
-                              <div className="pt-2 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between text-[9px] font-mono text-slate-500 dark:text-slate-400 print:text-black">
+                              <div className="pt-1.5 border-t-2 border-slate-900 dark:border-slate-300 print:border-black flex items-center justify-between text-[10px] sm:text-xs print:text-[10px] font-mono font-black text-slate-700 dark:text-slate-300 print:text-black">
                                 <span>OAYKAY FORGINGS • INDUSTRIAL PACKAGING</span>
-                                <span>BOX {carton.cartonNo} OF {activeSummary?.totalBoxes}</span>
+                                <span className="font-mono bg-black text-white px-2 py-0.5 rounded print:border print:border-black print:bg-transparent print:text-black font-black">
+                                  BOX {carton.cartonNo} OF {activeSummary?.totalBoxes}
+                                </span>
                               </div>
                             </div>
                           </div>

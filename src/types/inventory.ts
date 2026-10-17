@@ -126,6 +126,13 @@ export interface SalesOrderItem {
   isPromoOrNonStock: boolean;
   selectedForLastBox?: boolean; // Selected to pack in final / bottom box
   
+  // Packaging specs (from SO Excel or Master)
+  size?: string;
+  icCapacity?: number | null; // Inner carton capacity (e.g. 10 pcs)
+  mcCapacity?: number | null; // Master carton capacity (e.g. 100 pcs)
+  icCount?: number | null; // Total IC count
+  mcCount?: number | null; // Total MC count (or fraction e.g. 0.1)
+
   // Packing configuration (Step 3)
   unitsPerBox: number; // Units per box (Whole integer)
   grossWeightPerBox: number; // Gross weight per box in kg (2 decimals)
@@ -154,6 +161,8 @@ export interface CartonItem {
   slNo: number; // 1, 2, 3 inside carton
   rawName: string;
   cleanName: string; // Uppercase
+  size?: string;
+  icInfo?: string;
   qty: number; // Whole integer
   weightKg: number; // Weight in kg
   isPromoOrNonStock: boolean;

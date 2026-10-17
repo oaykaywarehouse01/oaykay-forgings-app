@@ -254,6 +254,11 @@ export const parseSalesOrderExcel = async (file: File, skus: SkuItem[]): Promise
   let headerRowIdx = -1;
   let descColIdx = 1; // Col B default
   let qtyColIdx = 10; // Col K default
+  let sizeColIdx = -1;
+  let icCapacityColIdx = -1;
+  let mcCapacityColIdx = -1;
+  let icCountColIdx = -1;
+  let mcCountColIdx = -1;
 
   for (let r = 0; r < Math.min(rows.length, 32); r++) {
     const row = rows[r] || [];
@@ -266,8 +271,31 @@ export const parseSalesOrderExcel = async (file: File, skus: SkuItem[]): Promise
       if (val.includes('quantity')) {
         qtyColIdx = c;
       }
+      if (val === 'size') {
+        sizeColIdx = c;
+      }
     }
-    if (headerRowIdx !== -1) break;
+    if (headerRowIdx !== -1) {
+      const headerRow = rows[headerRowIdx] || [];
+      for (let c = 0; c < headerRow.length; c++) {
+        const val = String(headerRow[c] || '').toLowerCase().trim();
+        if (val === 'ic') {
+          if (qtyColIdx !== -1 && c < qtyColIdx) {
+            icCapacityColIdx = c;
+          } else {
+            icCountColIdx = c;
+          }
+        }
+        if (val === 'mc') {
+          if (qtyColIdx !== -1 && c < qtyColIdx) {
+            mcCapacityColIdx = c;
+          } else {
+            mcCountColIdx = c;
+          }
+        }
+      }
+      break;
+    }
   }
 
   const items: SalesOrderItem[] = [];
@@ -288,8 +316,17 @@ export const parseSalesOrderExcel = async (file: File, skus: SkuItem[]): Promise
       const cleanItemName = cleanItemNameForPackaging(rawItemName);
       const orderedQty = Math.round(Number(rawQty) || 0);
 
+      const size = sizeColIdx !== -1 && row[sizeColIdx] ? String(row[sizeColIdx]).trim() : undefined;
+      const icCapacity = icCapacityColIdx !== -1 && row[icCapacityColIdx] ? parseInt(String(row[icCapacityColIdx]), 10) || null : null;
+      const mcCapacity = mcCapacityColIdx !== -1 && row[mcCapacityColIdx] ? parseInt(String(row[mcCapacityColIdx]), 10) || null : null;
+      const icCount = icCountColIdx !== -1 && row[icCountColIdx] ? parseFloat(String(row[icCountColIdx])) || null : null;
+      const mcCount = mcCountColIdx !== -1 && row[mcCountColIdx] ? parseFloat(String(row[mcCountColIdx])) || null : null;
+
       const { matchedSku, isPromo } = matchItemToSku(rawItemName, skus);
       const packingConfig = getDefaultPackingConfig(cleanItemName, orderedQty);
+
+      // If mcCapacity is specified, unitsPerBox defaults to master carton capacity!
+      const unitsPerBox = (mcCapacity && mcCapacity > 0) ? mcCapacity : packingConfig.unitsPerBox;
 
       items.push({
         slNo: items.length + 1,
@@ -300,9 +337,14 @@ export const parseSalesOrderExcel = async (file: File, skus: SkuItem[]): Promise
         matchedSku,
         isPromoOrNonStock: isPromo,
         selectedForLastBox: isPromo, // Non-stock / promo items default to packing in last box
-        unitsPerBox: packingConfig.unitsPerBox,
+        size,
+        icCapacity,
+        mcCapacity,
+        icCount,
+        mcCount,
+        unitsPerBox,
         grossWeightPerBox: packingConfig.grossWeightPerBox,
-        isMixedCarton: isPromo, // Promo items default to mixed carton
+        isMixedCarton: isPromo || (mcCount !== null && mcCount < 1),
         mixedCartonNo: null,
         assignedBoxNo: null
       });
@@ -320,6 +362,66 @@ export const parseSalesOrderExcel = async (file: File, skus: SkuItem[]): Promise
     buyerAddress,
     items,
     rawFileName: file.name
+  };
+};
+
+// Hardcoded Sample SO #16 (exact match with Sales Order_16.xlsx - Bhaliya Power Tools)
+export const getSampleSalesOrder16 = (skus: SkuItem[]): SalesOrderData => {
+  const rawItems = [
+    { name: 'Cutting Wheel Catch Black 14"2 Net Dim', size: "14'2NET", icCap: 5, mcCap: 30, qty: 150, icCnt: 30, mcCnt: 5 },
+    { name: 'Grinding GC Wheel Black 04"X60 Grit DIM', size: '4X60', icCap: null, mcCap: 240, qty: 240, icCnt: null, mcCnt: 1 },
+    { name: 'Diamond Cutting Blade Seg Mistri M-4200 Dim', size: 'M-4200', icCap: 20, mcCap: 200, qty: 200, icCnt: 10, mcCnt: 1 },
+    { name: 'Diamond Cutting Blade Seg Mistri M-5200 Dim', size: 'M-5200', icCap: 10, mcCap: 100, qty: 100, icCnt: 10, mcCnt: 1 },
+    { name: 'Diamond Cutting Blade Ceramic Zero Chip Catch C-4600 Dim', size: 'C-4600', icCap: 20, mcCap: 200, qty: 200, icCnt: 10, mcCnt: 1 },
+    { name: 'Diamond Cutting Blade Seg Gold 5"X20mm G-5200 Dim', size: '5"x20mm', icCap: 10, mcCap: 100, qty: 100, icCnt: 10, mcCnt: 1 },
+    { name: 'SDS Hammer Drill Single 6x50x110 Dim', size: '6x110', icCap: 10, mcCap: 200, qty: 20, icCnt: 2, mcCnt: 0.1 },
+    { name: 'SDS Hammer Drill Single 6.5x100x160 Dim', size: '6.5x100x160', icCap: 10, mcCap: 200, qty: 20, icCnt: 2, mcCnt: 0.1 },
+    { name: 'SDS Hammer Drill  Single 08x50x110 Dim', size: '8x110', icCap: 10, mcCap: 200, qty: 20, icCnt: 2, mcCnt: 0.1 },
+    { name: 'SDS Hammer Drill Single 08x100x160 Dim', size: '8x16', icCap: 10, mcCap: 200, qty: 20, icCnt: 2, mcCnt: 0.1 },
+    { name: 'SDS Hammer Drill Single 12x100x160 Dim', size: '12x160', icCap: 10, mcCap: 100, qty: 20, icCnt: 2, mcCnt: 0.2 },
+    { name: 'L-Handle 1/2 Crv 18" Din', size: '1/2x18', icCap: 4, mcCap: 24, qty: 4, icCnt: 1, mcCnt: 0.1667 },
+    { name: 'Extension Bar 1/2"x125mmDIN', size: '1/2x125', icCap: 10, mcCap: 120, qty: 10, icCnt: 1, mcCnt: 0.0833 },
+  ];
+
+  const items: SalesOrderItem[] = rawItems.map((item, idx) => {
+    const cleanItemName = cleanItemNameForPackaging(item.name);
+    const { matchedSku, isPromo } = matchItemToSku(item.name, skus);
+    const packingConfig = getDefaultPackingConfig(cleanItemName, item.qty);
+    const unitsPerBox = item.mcCap || packingConfig.unitsPerBox;
+
+    return {
+      slNo: idx + 1,
+      rawItemName: item.name,
+      cleanItemName,
+      orderedQty: item.qty,
+      dispatchQty: item.qty,
+      matchedSku,
+      isPromoOrNonStock: isPromo,
+      selectedForLastBox: isPromo,
+      size: item.size,
+      icCapacity: item.icCap,
+      mcCapacity: item.mcCap,
+      icCount: item.icCnt,
+      mcCount: item.mcCnt,
+      unitsPerBox,
+      grossWeightPerBox: packingConfig.grossWeightPerBox,
+      isMixedCarton: isPromo || (item.mcCnt !== null && item.mcCnt < 1),
+      mixedCartonNo: null,
+      assignedBoxNo: null
+    };
+  });
+
+  return {
+    piNumber: '16',
+    orderDate: '9-Apr-26',
+    partyName: 'Bhaliya Power Tools and Repairing',
+    partyAbbr: 'BPTR',
+    stateName: 'Rajasthan',
+    stateCode: '08',
+    shippingMark: 'BPTR/Rajasthan/08',
+    buyerAddress: 'Bhaliya Power Tools and Repairing, Cement Road, Behind Baba Guest House, Cement Road, Ramganjmandi, Kota',
+    items,
+    rawFileName: 'Sales Order_16.xlsx'
   };
 };
 
@@ -393,82 +495,30 @@ export const generateCartonsAndPackagingList = (soData: SalesOrderData): Packing
   const promoItems = activeItems.filter(item => item.isPromoOrNonStock);
 
   // 2. Process tool items: Standard & Box Assigned
-  // CRITICAL LOGIC: If an item has totalQty > unitsPerBox (e.g. 400 pcs with unitsPerBox = 200),
-  // it MUST be split into multiple individual cartons:
-  // - Box 1: 200 pcs, Gross Weight: 18.00 kg
-  // - Box 2: 200 pcs, Gross Weight: 18.00 kg
-  // Each full box receives the exact item.grossWeightPerBox!
+  // Check if any tool item has explicit MC (Master Carton) capacity from Sales Order
+  const hasExplicitMC = toolItems.some(i => i.mcCapacity && i.mcCapacity > 0);
 
-  // Group tool items that share a mixed box (items with <= unitsPerBox sharing the same assignedBoxNo or mixedCartonNo)
-  const explicitMixedGroups: Record<number, SalesOrderItem[]> = {};
-  const standardOrSplitItems: SalesOrderItem[] = [];
+  if (hasExplicitMC) {
+    // -------------------------------------------------------------------------
+    // 2A. AUTOMATIC MC-DRIVEN PACKING (Zero setup step needed!)
+    // -------------------------------------------------------------------------
+    const looseToolItems: Array<{ item: SalesOrderItem; qty: number; fraction: number; weight: number }> = [];
 
-  toolItems.forEach(item => {
-    const totalQty = typeof item.dispatchQty === 'number' ? Math.round(item.dispatchQty) : Math.round(item.orderedQty);
-    const unitsPerBox = Math.max(1, Math.round(item.unitsPerBox || totalQty));
+    toolItems.forEach(item => {
+      const totalQty = typeof item.dispatchQty === 'number' ? Math.round(item.dispatchQty) : Math.round(item.orderedQty);
+      if (totalQty <= 0) return;
 
-    // If item is explicitly marked mixed or shares a box with another item and fits in 1 box
-    if (item.isMixedCarton && item.mixedCartonNo) {
-      if (!explicitMixedGroups[item.mixedCartonNo]) explicitMixedGroups[item.mixedCartonNo] = [];
-      explicitMixedGroups[item.mixedCartonNo].push(item);
-    } else {
-      standardOrSplitItems.push(item);
-    }
-  });
+      const mcCap = (item.mcCapacity && item.mcCapacity > 0) ? item.mcCapacity : (item.unitsPerBox || totalQty);
+      const grossWtPerBox = Number(Number(item.grossWeightPerBox || 15.00).toFixed(2));
 
-  // Collect all manually reserved assignedBoxNo values upfront so Auto boxes never collide
-  const reservedBoxNos = new Set(standardOrSplitItems.map(i => i.assignedBoxNo).filter(Boolean) as number[]);
-  Object.keys(explicitMixedGroups).forEach(k => {
-    const num = parseInt(k, 10);
-    if (!isNaN(num) && num > 0) reservedBoxNos.add(num);
-  });
+      // Number of complete master cartons
+      const fullBoxes = Math.floor(totalQty / mcCap);
+      const remainderQty = totalQty % mcCap;
 
-  // Pack standard and split tool items
-  standardOrSplitItems.forEach(item => {
-    const totalQty = typeof item.dispatchQty === 'number' ? Math.round(item.dispatchQty) : Math.round(item.orderedQty);
-    if (totalQty <= 0) return;
-
-    const unitsPerBox = Math.max(1, Math.round(item.unitsPerBox || totalQty));
-    const grossWtPerBox = Number(Number(item.grossWeightPerBox || 15.00).toFixed(2));
-
-    let remainingQty = totalQty;
-    if (!item.assignedBoxNo) {
-      while (reservedBoxNos.has(currentCartonNo)) {
-        currentCartonNo++;
-      }
-    }
-    let boxNum = item.assignedBoxNo ? item.assignedBoxNo : currentCartonNo;
-
-    while (remainingQty > 0) {
-      const boxQty = Math.min(unitsPerBox, remainingQty);
-      // For a full box (e.g. 200/200), weight is exactly grossWtPerBox (e.g. 18.00 kg)
-      // For a partial remainder box (e.g. 50/200), weight is proportional
-      const boxWt = boxQty === unitsPerBox 
-        ? grossWtPerBox 
-        : Number(((boxQty / unitsPerBox) * grossWtPerBox).toFixed(2));
-
-      // If a carton with this boxNum already exists (from another item sharing it)
-      const existingCartonIndex = cartons.findIndex(c => c.cartonNo === boxNum);
-      if (existingCartonIndex !== -1 && item.assignedBoxNo) {
-        // Append item to existing carton
-        const existingCarton = cartons[existingCartonIndex];
-        existingCarton.items.push({
-          id: `item-${boxNum}-${item.slNo}-${remainingQty}`,
-          sourceItemSlNo: item.slNo,
-          slNo: existingCarton.items.length + 1,
-          rawName: item.rawItemName,
-          cleanName: item.cleanItemName,
-          qty: boxQty,
-          weightKg: boxWt,
-          isPromoOrNonStock: false
-        });
-        existingCarton.totalQty += boxQty;
-        existingCarton.grossWeightKg = Number((existingCarton.grossWeightKg + boxWt).toFixed(2));
-        existingCarton.isMixed = true;
-      } else {
-        // Create new carton
+      for (let b = 0; b < fullBoxes; b++) {
+        const boxNum = currentCartonNo++;
         cartons.push({
-          id: `carton-${boxNum}-${item.slNo}-${remainingQty}`,
+          id: `carton-${boxNum}-${item.slNo}-${b}`,
           cartonNo: boxNum,
           shippingMark: soData.shippingMark,
           piNumber: soData.piNumber,
@@ -479,74 +529,237 @@ export const generateCartonsAndPackagingList = (soData: SalesOrderData): Packing
             slNo: 1,
             rawName: item.rawItemName,
             cleanName: item.cleanItemName,
-            qty: boxQty,
-            weightKg: boxWt,
+            size: item.size,
+            icInfo: item.icCapacity ? `${Math.round(mcCap / item.icCapacity)} IC × ${item.icCapacity} Pcs` : undefined,
+            qty: mcCap,
+            weightKg: grossWtPerBox,
             isPromoOrNonStock: false
           }],
-          totalQty: boxQty,
-          grossWeightKg: boxWt,
+          totalQty: mcCap,
+          grossWeightKg: grossWtPerBox,
           isMixed: false
         });
       }
 
+      if (remainderQty > 0) {
+        const fraction = remainderQty / mcCap;
+        const partWeight = Number(((remainderQty / mcCap) * grossWtPerBox).toFixed(2));
+        looseToolItems.push({
+          item,
+          qty: remainderQty,
+          fraction,
+          weight: partWeight
+        });
+      }
+    });
+
+    // Pack loose tool items into mixed cartons
+    if (looseToolItems.length > 0) {
+      let currentMixedChunk: typeof looseToolItems = [];
+      let currentFractionSum = 0;
+
+      const finalizeMixedChunk = (chunk: typeof looseToolItems) => {
+        if (chunk.length === 0) return;
+        const boxNum = currentCartonNo++;
+        const totalWeight = Number(chunk.reduce((sum, ci) => sum + ci.weight, 0).toFixed(2));
+        const finalWeight = totalWeight > 0 ? Math.max(8.00, totalWeight) : 14.50;
+
+        const cartonItems: CartonItem[] = chunk.map((ci, idx) => ({
+          id: `item-${boxNum}-${ci.item.slNo}-mixed`,
+          sourceItemSlNo: ci.item.slNo,
+          slNo: idx + 1,
+          rawName: ci.item.rawItemName,
+          cleanName: ci.item.cleanItemName,
+          size: ci.item.size,
+          icInfo: ci.item.icCapacity ? `${Math.ceil(ci.qty / ci.item.icCapacity)} IC × ${ci.item.icCapacity} Pcs` : undefined,
+          qty: ci.qty,
+          weightKg: ci.weight > 0 ? ci.weight : Number((finalWeight / chunk.length).toFixed(2)),
+          isPromoOrNonStock: false
+        }));
+
+        cartons.push({
+          id: `carton-${boxNum}-mixed-tools`,
+          cartonNo: boxNum,
+          shippingMark: soData.shippingMark,
+          piNumber: soData.piNumber,
+          partyName: soData.partyName,
+          items: cartonItems,
+          totalQty: cartonItems.reduce((acc, ci) => acc + ci.qty, 0),
+          grossWeightKg: finalWeight,
+          isMixed: true
+        });
+      };
+
+      looseToolItems.forEach(loose => {
+        if (currentFractionSum + loose.fraction > 1.05 && currentMixedChunk.length > 0) {
+          finalizeMixedChunk(currentMixedChunk);
+          currentMixedChunk = [loose];
+          currentFractionSum = loose.fraction;
+        } else {
+          currentMixedChunk.push(loose);
+          currentFractionSum += loose.fraction;
+        }
+      });
+      if (currentMixedChunk.length > 0) {
+        finalizeMixedChunk(currentMixedChunk);
+      }
+    }
+  } else {
+    // -------------------------------------------------------------------------
+    // 2B. LEGACY / MANUAL BOX PACKING (When no explicit MC in SO)
+    // -------------------------------------------------------------------------
+    // Group tool items that share a mixed box (items with <= unitsPerBox sharing the same assignedBoxNo or mixedCartonNo)
+    const explicitMixedGroups: Record<number, SalesOrderItem[]> = {};
+    const standardOrSplitItems: SalesOrderItem[] = [];
+
+    toolItems.forEach(item => {
+      const totalQty = typeof item.dispatchQty === 'number' ? Math.round(item.dispatchQty) : Math.round(item.orderedQty);
+      const unitsPerBox = Math.max(1, Math.round(item.unitsPerBox || totalQty));
+
+      // If item is explicitly marked mixed or shares a box with another item and fits in 1 box
+      if (item.isMixedCarton && item.mixedCartonNo) {
+        if (!explicitMixedGroups[item.mixedCartonNo]) explicitMixedGroups[item.mixedCartonNo] = [];
+        explicitMixedGroups[item.mixedCartonNo].push(item);
+      } else {
+        standardOrSplitItems.push(item);
+      }
+    });
+
+    // Collect all manually reserved assignedBoxNo values upfront so Auto boxes never collide
+    const reservedBoxNos = new Set(standardOrSplitItems.map(i => i.assignedBoxNo).filter(Boolean) as number[]);
+    Object.keys(explicitMixedGroups).forEach(k => {
+      const num = parseInt(k, 10);
+      if (!isNaN(num) && num > 0) reservedBoxNos.add(num);
+    });
+
+    // Pack standard and split tool items
+    standardOrSplitItems.forEach(item => {
+      const totalQty = typeof item.dispatchQty === 'number' ? Math.round(item.dispatchQty) : Math.round(item.orderedQty);
+      if (totalQty <= 0) return;
+
+      const unitsPerBox = Math.max(1, Math.round(item.unitsPerBox || totalQty));
+      const grossWtPerBox = Number(Number(item.grossWeightPerBox || 15.00).toFixed(2));
+
+      let remainingQty = totalQty;
       if (!item.assignedBoxNo) {
-        currentCartonNo++;
         while (reservedBoxNos.has(currentCartonNo)) {
           currentCartonNo++;
         }
-        boxNum = currentCartonNo;
-      } else {
-        boxNum++;
-        if (boxNum > currentCartonNo) {
-          currentCartonNo = boxNum;
+      }
+      let boxNum = item.assignedBoxNo ? item.assignedBoxNo : currentCartonNo;
+
+      while (remainingQty > 0) {
+        const boxQty = Math.min(unitsPerBox, remainingQty);
+        // For a full box (e.g. 200/200), weight is exactly grossWtPerBox (e.g. 18.00 kg)
+        // For a partial remainder box (e.g. 50/200), weight is proportional
+        const boxWt = boxQty === unitsPerBox 
+          ? grossWtPerBox 
+          : Number(((boxQty / unitsPerBox) * grossWtPerBox).toFixed(2));
+
+        // If a carton with this boxNum already exists (from another item sharing it)
+        const existingCartonIndex = cartons.findIndex(c => c.cartonNo === boxNum);
+        if (existingCartonIndex !== -1 && item.assignedBoxNo) {
+          // Append item to existing carton
+          const existingCarton = cartons[existingCartonIndex];
+          existingCarton.items.push({
+            id: `item-${boxNum}-${item.slNo}-${remainingQty}`,
+            sourceItemSlNo: item.slNo,
+            slNo: existingCarton.items.length + 1,
+            rawName: item.rawItemName,
+            cleanName: item.cleanItemName,
+            size: item.size,
+            qty: boxQty,
+            weightKg: boxWt,
+            isPromoOrNonStock: false
+          });
+          existingCarton.totalQty += boxQty;
+          existingCarton.grossWeightKg = Number((existingCarton.grossWeightKg + boxWt).toFixed(2));
+          existingCarton.isMixed = true;
+        } else {
+          // Create new carton
+          cartons.push({
+            id: `carton-${boxNum}-${item.slNo}-${remainingQty}`,
+            cartonNo: boxNum,
+            shippingMark: soData.shippingMark,
+            piNumber: soData.piNumber,
+            partyName: soData.partyName,
+            items: [{
+              id: `item-${boxNum}-${item.slNo}`,
+              sourceItemSlNo: item.slNo,
+              slNo: 1,
+              rawName: item.rawItemName,
+              cleanName: item.cleanItemName,
+              size: item.size,
+              qty: boxQty,
+              weightKg: boxWt,
+              isPromoOrNonStock: false
+            }],
+            totalQty: boxQty,
+            grossWeightKg: boxWt,
+            isMixed: false
+          });
         }
+
+        if (!item.assignedBoxNo) {
+          currentCartonNo++;
+          while (reservedBoxNos.has(currentCartonNo)) {
+            currentCartonNo++;
+          }
+          boxNum = currentCartonNo;
+        } else {
+          boxNum++;
+          if (boxNum > currentCartonNo) {
+            currentCartonNo = boxNum;
+          }
+        }
+
+        remainingQty -= boxQty;
+      }
+    });
+
+    // Pack explicit mixed tool groups
+    Object.entries(explicitMixedGroups).forEach(([cNoStr, groupItems]) => {
+      let assignedNo = parseInt(cNoStr, 10);
+      if (isNaN(assignedNo) || assignedNo < currentCartonNo) {
+        assignedNo = currentCartonNo++;
+      } else if (assignedNo >= currentCartonNo) {
+        currentCartonNo = assignedNo + 1;
       }
 
-      remainingQty -= boxQty;
-    }
-  });
+      const combinedWeight = Number(
+        Number(groupItems[0]?.mixedCartonGrossWeight || groupItems[0]?.grossWeightPerBox || 15.00).toFixed(2)
+      );
 
-  // Pack explicit mixed tool groups
-  Object.entries(explicitMixedGroups).forEach(([cNoStr, groupItems]) => {
-    let assignedNo = parseInt(cNoStr, 10);
-    if (isNaN(assignedNo) || assignedNo < currentCartonNo) {
-      assignedNo = currentCartonNo++;
-    } else if (assignedNo >= currentCartonNo) {
-      currentCartonNo = assignedNo + 1;
-    }
+      const cartonItems: CartonItem[] = groupItems.map((gi, idx) => {
+        const itemQty = typeof gi.dispatchQty === 'number' ? Math.round(gi.dispatchQty) : Math.round(gi.orderedQty);
+        return {
+          id: `item-${assignedNo}-${gi.slNo}`,
+          sourceItemSlNo: gi.slNo,
+          slNo: idx + 1,
+          rawName: gi.rawItemName,
+          cleanName: gi.cleanItemName,
+          size: gi.size,
+          qty: itemQty,
+          weightKg: Number((combinedWeight / groupItems.length).toFixed(2)),
+          isPromoOrNonStock: false
+        };
+      });
 
-    const combinedWeight = Number(
-      Number(groupItems[0]?.mixedCartonGrossWeight || groupItems[0]?.grossWeightPerBox || 15.00).toFixed(2)
-    );
+      const totalQty = cartonItems.reduce((acc, ci) => acc + ci.qty, 0);
 
-    const cartonItems: CartonItem[] = groupItems.map((gi, idx) => {
-      const itemQty = typeof gi.dispatchQty === 'number' ? Math.round(gi.dispatchQty) : Math.round(gi.orderedQty);
-      return {
-        id: `item-${assignedNo}-${gi.slNo}`,
-        sourceItemSlNo: gi.slNo,
-        slNo: idx + 1,
-        rawName: gi.rawItemName,
-        cleanName: gi.cleanItemName,
-        qty: itemQty,
-        weightKg: Number((combinedWeight / groupItems.length).toFixed(2)),
-        isPromoOrNonStock: false
-      };
+      cartons.push({
+        id: `carton-${assignedNo}-mixed-tools`,
+        cartonNo: assignedNo,
+        shippingMark: soData.shippingMark,
+        piNumber: soData.piNumber,
+        partyName: soData.partyName,
+        items: cartonItems,
+        totalQty,
+        grossWeightKg: combinedWeight,
+        isMixed: true
+      });
     });
-
-    const totalQty = cartonItems.reduce((acc, ci) => acc + ci.qty, 0);
-
-    cartons.push({
-      id: `carton-${assignedNo}-mixed-tools`,
-      cartonNo: assignedNo,
-      shippingMark: soData.shippingMark,
-      piNumber: soData.piNumber,
-      partyName: soData.partyName,
-      items: cartonItems,
-      totalQty,
-      grossWeightKg: combinedWeight,
-      isMixed: true
-    });
-  });
+  }
 
   // 5. PROCESS PROMO / NON-STOCK ITEMS (ALWAYS PACKED AT THE VERY BOTTOM / LAST BOX)
   if (promoItems.length > 0) {

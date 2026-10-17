@@ -158,6 +158,28 @@ mark.highlight {
     break-after: auto !important;
   }
 
+  /* Exactly 4 Box Labels Per Page Print Layout (2 Columns x 2 Rows Grid) */
+  .print-page-4labels {
+    height: 278mm !important;
+    max-height: 278mm !important;
+    min-height: 278mm !important;
+    box-sizing: border-box !important;
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    grid-template-rows: repeat(2, minmax(0, 1fr)) !important;
+    gap: 4mm !important;
+    page-break-after: always !important;
+    break-after: page !important;
+    overflow: hidden !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .print-page-4labels:last-child {
+    page-break-after: auto !important;
+    break-after: auto !important;
+  }
+
   .shipping-carton-label {
     height: 134mm !important;
     max-height: 134mm !important;
@@ -176,16 +198,44 @@ mark.highlight {
     overflow: hidden !important;
   }
 
-  /* Text & inputs in printed labels */
-  .shipping-carton-label input {
+  /* 4-Up Box Label (A4 Quadrant with large, bold, high-contrast readable font) */
+  .shipping-carton-label-4up {
+    height: 136mm !important;
+    max-height: 136mm !important;
+    min-height: 136mm !important;
+    box-sizing: border-box !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    border: 2.5px solid #000000 !important;
+    border-radius: 6px !important;
+    padding: 8px 10px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: space-between !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    overflow: hidden !important;
+  }
+
+  /* High-contrast bold inputs in printed labels */
+  .shipping-carton-label input,
+  .shipping-carton-label-4up input {
     border: none !important;
     outline: none !important;
     box-shadow: none !important;
     background: transparent !important;
     color: #000000 !important;
-    font-weight: 800 !important;
+    font-weight: 900 !important;
     padding: 0 !important;
     margin: 0 !important;
+  }
+
+  /* Strong readable print typography */
+  .shipping-carton-label *,
+  .shipping-carton-label-4up * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    color: #000000 !important;
   }
 
   .print-page-break {
