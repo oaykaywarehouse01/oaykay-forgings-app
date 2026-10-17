@@ -721,8 +721,86 @@ export const StockMasterView: React.FC = () => {
         </div>
       </div>
 
-      {/* 5 ULTRA-CLEAN COLUMNS DATA TABLE (FIT 100% ON SCREEN — ZERO HORIZONTAL SCROLL) */}
-      <div className="w-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xs dark:border-slate-800 dark:bg-slate-900">
+      {/* Mobile Touch Cards View (sm:hidden) */}
+      <div className="sm:hidden space-y-3">
+        {filteredSkus.length === 0 ? (
+          <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-slate-400 dark:border-slate-800 dark:bg-slate-900">
+            No items match the selected filter criteria.
+          </div>
+        ) : (
+          filteredSkus.map(item => {
+            const roundedStock = Math.round(item.current_stock);
+            return (
+              <div
+                key={item.id}
+                className="rounded-2xl border border-slate-200 bg-white p-4 shadow-xs dark:border-slate-800 dark:bg-slate-900"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1 min-w-0" onClick={() => setSelectedSku(item)}>
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <span className={`inline-flex items-center justify-center rounded px-1.5 py-0.5 text-[10px] font-black font-mono ${
+                        item.division === 'DIM'
+                          ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300'
+                          : item.division === 'DIN'
+                          ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
+                          : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                      }`}>
+                        {item.division}
+                      </span>
+                      <span className="font-mono text-[11px] text-slate-500 font-bold">
+                        {item.sku_code}
+                      </span>
+                    </div>
+                    <h4 className="text-sm font-bold text-slate-900 dark:text-white leading-snug hover:text-orange-600 transition">
+                      {item.clean_name}
+                    </h4>
+                    <p className="text-[11px] text-slate-500 font-mono mt-0.5 truncate">
+                      {item.main_category} &gt; {item.sub_category}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase block">Current Stock</span>
+                    <div className={`font-mono text-lg font-black tabular-nums ${
+                      roundedStock < 0 
+                        ? 'text-rose-600 dark:text-rose-400' 
+                        : roundedStock === 0 
+                        ? 'text-slate-400' 
+                        : 'text-slate-900 dark:text-white'
+                    }`}>
+                      {roundedStock.toLocaleString()} <span className="text-xs font-normal text-slate-400">{item.unit}</span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => quickAdjustStock(item.id, -1)}
+                      className="h-10 w-10 rounded-xl border border-slate-200 bg-slate-50 text-slate-700 hover:bg-rose-500 hover:border-rose-500 hover:text-white active:scale-90 text-lg font-black transition flex items-center justify-center shadow-xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 cursor-pointer"
+                      title="Deduct 1 unit (-1)"
+                    >
+                      −
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => quickAdjustStock(item.id, 1)}
+                      className="h-10 w-10 rounded-xl border border-slate-200 bg-slate-50 text-slate-700 hover:bg-emerald-600 hover:border-emerald-600 hover:text-white active:scale-90 text-lg font-black transition flex items-center justify-center shadow-xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 cursor-pointer"
+                      title="Add 1 unit (+1)"
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* 5 ULTRA-CLEAN COLUMNS DATA TABLE (HIDDEN ON MOBILE, VISIBLE ON TABLETS/DESKTOP) */}
+      <div className="hidden sm:block w-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xs dark:border-slate-800 dark:bg-slate-900">
         <table className="w-full table-fixed border-collapse text-left">
           <thead>
             <tr className="border-b border-slate-200 bg-slate-50/90 text-xs font-bold text-slate-600 uppercase tracking-wider dark:border-slate-800 dark:bg-slate-800/80">

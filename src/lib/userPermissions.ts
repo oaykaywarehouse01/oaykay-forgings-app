@@ -27,7 +27,8 @@ export const ROLE_CONFIGS: Record<UserRole, RoleInfo> = {
       'stock-entry',
       'write-off-audit',
       'stock-alerts',
-      'tally-sync'
+      'tally-sync',
+      'reports-hub'
     ]
   },
   dispatch_manager: {
@@ -38,7 +39,7 @@ export const ROLE_CONFIGS: Record<UserRole, RoleInfo> = {
     badgeText: 'text-emerald-700 dark:text-emerald-300',
     description: 'Access to Sales Order Dispatch, Carton Box Builder, Packing List & Labels, and Stock Master (View-only).',
     defaultModule: 'sales-dispatch',
-    allowedModules: ['sales-dispatch', 'stock-master']
+    allowedModules: ['sales-dispatch', 'stock-master', 'reports-hub']
   },
   inward_storekeeper: {
     role: 'inward_storekeeper',
@@ -48,7 +49,7 @@ export const ROLE_CONFIGS: Record<UserRole, RoleInfo> = {
     badgeText: 'text-indigo-700 dark:text-indigo-300',
     description: 'Stock In / Out Entry receipts with notes, audit logs, and Stock Master (View-only).',
     defaultModule: 'stock-entry',
-    allowedModules: ['stock-entry', 'stock-master']
+    allowedModules: ['stock-entry', 'stock-master', 'reports-hub']
   },
   count_staff: {
     role: 'count_staff',

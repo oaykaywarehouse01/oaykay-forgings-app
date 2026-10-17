@@ -104,7 +104,8 @@ export type ActiveNavModule =
   | 'stock-entry' 
   | 'write-off-audit' 
   | 'stock-alerts' 
-  | 'tally-sync';
+  | 'tally-sync'
+  | 'reports-hub';
 
 export interface DrillDownState {
   level: 1 | 2 | 3 | 4;

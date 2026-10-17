@@ -288,7 +288,7 @@ export const StockEntryView: React.FC = () => {
       {/* Main Two-Column Grid: Left Item Selector + Right Dual-Mode Inward Action Form */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Left Column: Instant Multi-Token SKU Search & Selector (5 cols) */}
-        <div className="lg:col-span-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-xs dark:border-slate-800 dark:bg-slate-900 flex flex-col h-[740px]">
+        <div className="lg:col-span-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-xs dark:border-slate-800 dark:bg-slate-900 flex flex-col h-[360px] lg:h-[740px]">
           <div className="flex items-center justify-between mb-3">
             <span className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-wider">
               1. Select Target SKU

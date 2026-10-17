@@ -59,7 +59,7 @@ export const SkuInspectorDrawer: React.FC = () => {
   return (
     <div className="fixed inset-0 z-50 overflow-hidden bg-slate-950/40 backdrop-blur-xs animate-in fade-in duration-150">
       <div 
-        className="fixed inset-y-0 right-0 max-w-full flex pl-10"
+        className="fixed inset-y-0 right-0 max-w-full flex pl-3 sm:pl-10"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="w-screen max-w-lg bg-white shadow-2xl flex flex-col dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 animate-in slide-in-from-right duration-200">

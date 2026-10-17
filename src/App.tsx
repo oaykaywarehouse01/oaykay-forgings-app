@@ -9,6 +9,8 @@ import { LowStockView } from './components/LowStockView';
 import { TallySyncView } from './components/TallySyncView';
 import { SalesDispatchView } from './components/SalesDispatchView';
 import { LocationStockView } from './components/LocationStockView';
+import { ReportsHubView } from './components/ReportsHubView';
+import { MobileBottomNav } from './components/MobileBottomNav';
 import { CommandPalette } from './components/CommandPalette';
 import { SkuInspectorDrawer } from './components/SkuInspectorDrawer';
 import { StockTransactionModal } from './components/StockTransactionModal';
@@ -65,7 +67,7 @@ export const App: React.FC = () => {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 antialiased selection:bg-orange-500 selection:text-white">
-      {/* Collapsible Left Sidebar */}
+      {/* Collapsible Left Sidebar / Mobile Overlay Drawer */}
       <Sidebar />
 
       {/* Main Content Area */}
@@ -73,17 +75,21 @@ export const App: React.FC = () => {
         {/* Sticky Top Header */}
         <Header />
 
-        {/* Dynamic Viewport */}
-        <main className="flex-1 overflow-y-auto">
+        {/* Dynamic Viewport (with pb-20 on mobile so bottom nav never overlaps content) */}
+        <main className="flex-1 overflow-y-auto pb-20 md:pb-6">
           {activeModule === 'stock-master' && <StockMasterView />}
           {activeModule === 'sales-dispatch' && <SalesDispatchView />}
           {activeModule === 'location-stock' && <LocationStockView />}
           {activeModule === 'stock-entry' && <StockEntryView />}
+          {activeModule === 'reports-hub' && <ReportsHubView />}
           {activeModule === 'write-off-audit' && <AuditView />}
           {(activeModule === 'stock-alerts' || activeModule === ('low-stock-alerts' as any)) && <LowStockView />}
           {activeModule === 'tally-sync' && <TallySyncView />}
         </main>
       </div>
+
+      {/* Mobile Native-Style Bottom Navigation Bar */}
+      <MobileBottomNav />
 
       {/* Modals & Slide-Over Drawers */}
       <CommandPalette />
